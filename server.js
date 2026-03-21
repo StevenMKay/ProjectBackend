@@ -44,9 +44,11 @@ const auth = adminInitialised ? admin.auth()   : null;
 const db   = adminInitialised ? admin.firestore() : null;
 
 const app = express();
-app.use(cors({
-    origin: process.env.ALLOWED_ORIGIN || '*',  // Lock this down to your domain in production
-}));
+const corsOptions = {
+    origin: process.env.ALLOWED_ORIGIN || '*',
+};
+app.use(cors(corsOptions));
+app.options('*', cors(corsOptions)); // Handle preflight requests for all routes
 app.use(express.json());
 
 const API_KEY = process.env.YOUTUBE_API_KEY || 'YOUR_YOUTUBE_API_KEY';
