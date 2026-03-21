@@ -44,11 +44,19 @@ const auth = adminInitialised ? admin.auth()   : null;
 const db   = adminInitialised ? admin.firestore() : null;
 
 const app = express();
-const corsOptions = {
-    origin: process.env.ALLOWED_ORIGIN || '*',
-};
-app.use(cors(corsOptions));
-app.options('*', cors(corsOptions)); // Handle preflight requests for all routes
+
+// Manual CORS — handles preflight OPTIONS reliably on Railway
+app.use((req, res, next) => {
+    const allowedOrigin = process.env.ALLOWED_ORIGIN || '*';
+    res.setHeader('Access-Control-Allow-Origin', allowedOrigin);
+    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PATCH, DELETE, OPTIONS');
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+    if (req.method === 'OPTIONS') {
+        return res.status(204).end();
+    }
+    next();
+});
+
 app.use(express.json());
 
 const API_KEY = process.env.YOUTUBE_API_KEY || 'YOUR_YOUTUBE_API_KEY';
