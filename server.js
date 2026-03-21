@@ -59,6 +59,7 @@ app.use((req, res, next) => {
 });
 
 app.use(express.json());
+app.use(express.urlencoded({ extended: false }));
 
 const API_KEY = process.env.YOUTUBE_API_KEY || 'YOUR_YOUTUBE_API_KEY';
 
