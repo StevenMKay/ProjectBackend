@@ -1,0 +1,6 @@
+{
+  "provider": "node",
+  "start": {
+    "cmd": "node server.js"
+  }
+}
