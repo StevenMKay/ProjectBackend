@@ -88,10 +88,16 @@ app.get('/api/youtube', async (req, res) => {
 });
 
 // ============================================================
+// OWNER BYPASS — UIDs in this list always have full admin access
+// ============================================================
+const OWNER_UIDS_ADMIN = ['M49k5gv2ovcAHVrMnRf9jmWMxts1'];
+
+// ============================================================
 // ADMIN AUTH MIDDLEWARE
 // ============================================================
 // Verifies the Firebase ID token in the Authorization header
 // and checks the user has role: "admin" in Firestore.
+// Site owners (OWNER_UIDS_ADMIN) bypass the Firestore role check.
 //
 async function requireAdmin(req, res, next) {
     if (!adminInitialised) {
@@ -103,11 +109,42 @@ async function requireAdmin(req, res, next) {
 
     try {
         const decoded = await auth.verifyIdToken(token);
+        // Site owner always has admin access — no Firestore doc required
+        if (OWNER_UIDS_ADMIN.includes(decoded.uid)) {
+            req.adminUid = decoded.uid;
+            return next();
+        }
         const userDoc  = await db.collection('users').doc(decoded.uid).get();
         if (!userDoc.exists || userDoc.data().role !== 'admin') {
             return res.status(403).json({ error: 'Forbidden: admin role required' });
         }
         req.adminUid = decoded.uid;
+        next();
+    } catch (err) {
+        return res.status(401).json({ error: 'Invalid or expired token' });
+    }
+}
+
+// ============================================================
+// TENANT AUTH MIDDLEWARE
+// ============================================================
+// Any provisioned user (or site owner). Populates req.uid and req.userDoc.
+//
+async function requireAuth(req, res, next) {
+    if (!adminInitialised) return res.status(503).json({ error: 'Backend not configured' });
+    const token = (req.headers.authorization || '').replace('Bearer ', '').trim();
+    if (!token) return res.status(401).json({ error: 'No token provided' });
+    try {
+        const decoded = await auth.verifyIdToken(token);
+        req.uid = decoded.uid;
+        // Site owner gets a synthetic admin profile
+        if (OWNER_UIDS_ADMIN.includes(decoded.uid)) {
+            req.userDoc = { tenantId: 'admin', role: 'admin', email: decoded.email || '', displayName: '' };
+            return next();
+        }
+        const doc = await db.collection('users').doc(decoded.uid).get();
+        if (!doc.exists) return res.status(403).json({ error: 'Account not provisioned' });
+        req.userDoc = doc.data();
         next();
     } catch (err) {
         return res.status(401).json({ error: 'Invalid or expired token' });
@@ -270,6 +307,84 @@ app.delete('/api/admin/users/:uid', requireAdmin, async (req, res) => {
     } catch (err) {
         console.error(err);
         res.status(500).json({ error: 'Failed to delete user' });
+    }
+});
+
+// ============================================================
+// TENANT SELF-SERVICE ROUTES
+// ============================================================
+
+// List members of the caller's tenant
+app.get('/api/tenant/members', requireAuth, async (req, res) => {
+    try {
+        const snap = await db.collection('users').where('tenantId', '==', req.userDoc.tenantId).get();
+        res.json(snap.docs.map(d => ({ uid: d.id, ...d.data() })));
+    } catch (err) {
+        console.error(err);
+        res.status(500).json({ error: 'Failed to list members' });
+    }
+});
+
+// Invite a new member to the caller's tenant (admin only)
+// Creates a Firebase Auth account + Firestore profile.
+// The front-end should call auth.sendPasswordResetEmail(email) afterwards
+// so the invitee receives a "set your password" email from Firebase.
+app.post('/api/tenant/invite', requireAuth, async (req, res) => {
+    if (req.userDoc.role !== 'admin') {
+        return res.status(403).json({ error: 'Only team admins can invite members' });
+    }
+    const { email, displayName, role } = req.body;
+    if (!email || !email.includes('@')) return res.status(400).json({ error: 'Valid email is required' });
+
+    const tenantId = req.userDoc.tenantId;
+    try {
+        // Check seat limit if a tenant doc exists
+        const tenantDoc = await db.collection('tenants').doc(tenantId).get();
+        if (tenantDoc.exists) {
+            const currentMembers = await db.collection('users').where('tenantId', '==', tenantId).get();
+            if (currentMembers.size >= (tenantDoc.data().maxSeats || 10)) {
+                return res.status(403).json({ error: 'Seat limit reached. Contact your administrator to upgrade.' });
+            }
+        }
+        // Create Firebase Auth account with a temp password
+        const tempPwd = Math.random().toString(36).slice(-8) + 'Aa1!';
+        const userRecord = await auth.createUser({ email, password: tempPwd, displayName: displayName || '' });
+        // Create Firestore profile
+        await db.collection('users').doc(userRecord.uid).set({
+            tenantId,
+            email,
+            displayName: displayName || '',
+            role: role === 'admin' ? 'admin' : 'member',
+            createdAt: new Date().toISOString()
+        });
+        res.json({ success: true, uid: userRecord.uid });
+    } catch (err) {
+        if (err.code === 'auth/email-already-exists') {
+            return res.status(409).json({ error: 'This email already has an account.' });
+        }
+        console.error(err);
+        res.status(500).json({ error: err.message || 'Failed to invite user' });
+    }
+});
+
+// Remove a member from the caller's tenant (admin only)
+app.delete('/api/tenant/members/:uid', requireAuth, async (req, res) => {
+    if (req.userDoc.role !== 'admin') {
+        return res.status(403).json({ error: 'Only team admins can remove members' });
+    }
+    const { uid } = req.params;
+    if (uid === req.uid) return res.status(400).json({ error: 'Cannot remove yourself' });
+    try {
+        const doc = await db.collection('users').doc(uid).get();
+        if (!doc.exists || doc.data().tenantId !== req.userDoc.tenantId) {
+            return res.status(404).json({ error: 'Member not found in your team' });
+        }
+        await auth.deleteUser(uid);
+        await db.collection('users').doc(uid).delete();
+        res.json({ success: true });
+    } catch (err) {
+        console.error(err);
+        res.status(500).json({ error: err.message || 'Failed to remove member' });
     }
 });
 
