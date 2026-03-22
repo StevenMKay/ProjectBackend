@@ -3,6 +3,7 @@ const express = require('express');
 const fetch   = require('node-fetch');
 const cors    = require('cors');
 const admin   = require('firebase-admin');
+const { getFirestore } = require('firebase-admin/firestore');
 const Stripe  = require('stripe');
 
 // Stripe init (graceful if key not set yet)
@@ -40,8 +41,8 @@ try {
     console.warn('[Firebase Admin] Could not initialise - admin routes disabled:', e.message);
 }
 
-const auth = adminInitialised ? admin.auth()   : null;
-const db   = adminInitialised ? admin.firestore() : null;
+const auth = adminInitialised ? admin.auth() : null;
+const db   = adminInitialised ? getFirestore(admin.app(), 'default') : null;
 
 const app = express();
 
