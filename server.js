@@ -42,7 +42,7 @@ try {
 }
 
 const auth = adminInitialised ? admin.auth() : null;
-const db   = adminInitialised ? getFirestore(admin.app(), 'default') : null;
+const db   = adminInitialised ? getFirestore(admin.app()) : null;
 
 const app = express();
 
