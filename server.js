@@ -324,7 +324,7 @@ app.post('/api/billing/checkout', async (req, res) => {
         res.json({ url: session.url });
     } catch (err) {
         console.error('[Billing] Checkout error:', err.message);
-        res.status(500).json({ error: 'Failed to create checkout session' });
+        res.status(500).json({ error: err.message || 'Failed to create checkout session' });
     }
     } catch (err) {
         console.error('[Billing] Outer checkout error:', err.message);
