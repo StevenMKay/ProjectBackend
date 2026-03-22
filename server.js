@@ -1,4 +1,3 @@
-
 require('dotenv').config();
 const express = require('express');
 const fetch   = require('node-fetch');
@@ -61,6 +60,9 @@ app.use((req, res, next) => {
 
 app.use(express.json());
 app.use(express.urlencoded({ extended: false }));
+
+// Diagnostic endpoint — confirms which version is deployed
+app.get('/api/ping', (req, res) => res.json({ ok: true, version: 'v3' }));
 
 const API_KEY = process.env.YOUTUBE_API_KEY || 'YOUR_YOUTUBE_API_KEY';
 
