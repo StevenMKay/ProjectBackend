@@ -318,8 +318,8 @@ app.post('/api/billing/checkout', async (req, res) => {
                 plan,
                 maxSeats: String(PLANS[plan].maxSeats)
             },
-            success_url: `${process.env.ALLOWED_ORIGIN || 'https://www.careersolutionsfortoday.com'}/license-success.html?session_id={CHECKOUT_SESSION_ID}`,
-            cancel_url:  `${process.env.ALLOWED_ORIGIN || 'https://www.careersolutionsfortoday.com'}/license-pricing.html?cancelled=1`,
+            success_url: `${process.env.SITE_URL || 'https://www.careersolutionsfortoday.com'}/license-success.html?session_id={CHECKOUT_SESSION_ID}`,
+            cancel_url:  `${process.env.SITE_URL || 'https://www.careersolutionsfortoday.com'}/license-pricing.html?cancelled=1`,
         });
         res.json({ url: session.url });
     } catch (err) {
