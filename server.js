@@ -1,3 +1,4 @@
+
 require('dotenv').config();
 const express = require('express');
 const fetch   = require('node-fetch');
@@ -280,8 +281,10 @@ const PLANS = {
 };
 
 // Create Stripe Checkout Session
-app.post('/api/billing/checkout', express.json(), async (req, res) => {
+app.post('/api/billing/checkout', async (req, res) => {
+    try {
     if (!stripe) return res.status(503).json({ error: 'Billing not configured' });
+    if (!db)     return res.status(503).json({ error: 'Database not configured' });
 
     const { plan, companyName, adminEmail, tenantId } = req.body;
 
@@ -319,6 +322,10 @@ app.post('/api/billing/checkout', express.json(), async (req, res) => {
     } catch (err) {
         console.error('[Billing] Checkout error:', err.message);
         res.status(500).json({ error: 'Failed to create checkout session' });
+    }
+    } catch (err) {
+        console.error('[Billing] Outer checkout error:', err.message);
+        res.status(500).json({ error: err.message || 'Server error' });
     }
 });
 
