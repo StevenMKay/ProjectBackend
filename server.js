@@ -357,15 +357,7 @@ app.post('/api/tenant/invite', requireAuth, async (req, res) => {
             role: (role === 'admin' ? 'admin' : role === 'viewer' ? 'viewer' : 'member'),
             createdAt: new Date().toISOString()
         });
-        // Generate a password reset link via Admin SDK (more reliable than client-side sendPasswordResetEmail,
-        // which generates one-time links that corporate email scanners often consume before the user clicks them)
-        let resetLink = null;
-        try {
-            resetLink = await auth.generatePasswordResetLink(email);
-        } catch (linkErr) {
-            console.warn('Could not generate reset link:', linkErr.message);
-        }
-        res.json({ success: true, uid: userRecord.uid, resetLink: resetLink || null });
+        res.json({ success: true, uid: userRecord.uid });
     } catch (err) {
         if (err.code === 'auth/email-already-exists') {
             return res.status(409).json({ error: 'This email already has an account.' });
