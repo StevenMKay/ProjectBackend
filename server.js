@@ -378,8 +378,11 @@ app.patch('/api/tenant/members/:uid', requireAuth, async (req, res) => {
             return res.status(404).json({ error: 'Member not found in your team' });
         }
         const updates = {};
-        const allowed = ['displayName', 'jobTitle', 'dept'];
+        const allowed = ['displayName', 'jobTitle', 'dept', 'role'];
         allowed.forEach(k => { if (req.body[k] !== undefined) updates[k] = req.body[k]; });
+        if (updates.role && !['admin', 'member', 'viewer'].includes(updates.role)) {
+            return res.status(400).json({ error: 'Invalid role value' });
+        }
         if (Object.keys(updates).length === 0) return res.status(400).json({ error: 'No valid fields to update' });
         await db.collection('users').doc(uid).update(updates);
         if (updates.displayName) await auth.updateUser(uid, { displayName: updates.displayName });
