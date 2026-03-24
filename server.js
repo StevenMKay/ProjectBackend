@@ -1,6 +1,5 @@
 require('dotenv').config();
 const express = require('express');
-const fetch   = require('node-fetch');
 const cors    = require('cors');
 const admin   = require('firebase-admin');
 const { getFirestore } = require('firebase-admin/firestore');
