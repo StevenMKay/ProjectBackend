@@ -389,31 +389,30 @@ app.delete('/api/tenant/members/:uid', requireAuth, async (req, res) => {
 });
 
 // ============================================================
-// EMAIL — nodemailer (configure via Railway env vars)
-// SMTP_HOST, SMTP_PORT (587), SMTP_USER, SMTP_PASS, SMTP_FROM_NAME
+// EMAIL — Resend HTTP API (Railway blocks outbound SMTP)
+// Set RESEND_API_KEY, SMTP_USER (from address), SMTP_FROM_NAME in Railway vars
 // ============================================================
-const nodemailer = require('nodemailer');
+const FROM_NAME  = process.env.SMTP_FROM_NAME || 'NotebookPM';
+const FROM_EMAIL = process.env.SMTP_USER || 'noreply@careersolutionsfortoday.com';
 
-let emailTransporter = null;
-if (process.env.SMTP_HOST && process.env.SMTP_USER && process.env.SMTP_PASS) {
-    emailTransporter = nodemailer.createTransport({
-        host: process.env.SMTP_HOST,
-        port: parseInt(process.env.SMTP_PORT || '587'),
-        secure: parseInt(process.env.SMTP_PORT || '587') === 465,
-        auth: { user: process.env.SMTP_USER, pass: process.env.SMTP_PASS },
-        tls: { rejectUnauthorized: false }
-    });
-    console.log('[Email] SMTP configured:', process.env.SMTP_USER);
+if (process.env.RESEND_API_KEY) {
+    console.log('[Email] Resend configured, sending from:', FROM_EMAIL);
 } else {
-    console.warn('[Email] SMTP not configured. Set SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASS on Railway.');
+    console.warn('[Email] RESEND_API_KEY not set. Add it to Railway env vars.');
 }
 
-const FROM_NAME  = process.env.SMTP_FROM_NAME || 'NotebookPM';
-const FROM_EMAIL = process.env.SMTP_USER || '';
-
 async function sendCustomEmail({ to, subject, html }) {
-    if (!emailTransporter) throw new Error('SMTP not configured on server. Add SMTP_HOST, SMTP_USER, SMTP_PASS to Railway env vars.');
-    await emailTransporter.sendMail({ from: `"${FROM_NAME}" <${FROM_EMAIL}>`, to, subject, html });
+    const apiKey = process.env.RESEND_API_KEY;
+    if (!apiKey) throw new Error('RESEND_API_KEY not configured. Add it to Railway env vars.');
+    const response = await fetch('https://api.resend.com/emails', {
+        method: 'POST',
+        headers: { 'Authorization': `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ from: `${FROM_NAME} <${FROM_EMAIL}>`, to: [to], subject, html })
+    });
+    if (!response.ok) {
+        const err = await response.json().catch(() => ({}));
+        throw new Error(err.message || `Resend API error ${response.status}`);
+    }
 }
 
 function buildInviteEmailHtml({ displayName, inviterName, companyName, link }) {
