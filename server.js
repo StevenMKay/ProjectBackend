@@ -366,6 +366,30 @@ app.post('/api/tenant/invite', requireAuth, async (req, res) => {
     }
 });
 
+// Update a member's profile fields (admin only)
+app.patch('/api/tenant/members/:uid', requireAuth, async (req, res) => {
+    if (req.userDoc.role !== 'admin') {
+        return res.status(403).json({ error: 'Only team admins can edit members' });
+    }
+    const { uid } = req.params;
+    try {
+        const doc = await db.collection('users').doc(uid).get();
+        if (!doc.exists || doc.data().tenantId !== req.userDoc.tenantId) {
+            return res.status(404).json({ error: 'Member not found in your team' });
+        }
+        const updates = {};
+        const allowed = ['displayName', 'jobTitle', 'dept'];
+        allowed.forEach(k => { if (req.body[k] !== undefined) updates[k] = req.body[k]; });
+        if (Object.keys(updates).length === 0) return res.status(400).json({ error: 'No valid fields to update' });
+        await db.collection('users').doc(uid).update(updates);
+        if (updates.displayName) await auth.updateUser(uid, { displayName: updates.displayName });
+        res.json({ success: true });
+    } catch (err) {
+        console.error(err);
+        res.status(500).json({ error: err.message || 'Failed to update member' });
+    }
+});
+
 // Remove a member from the caller's tenant (admin only)
 app.delete('/api/tenant/members/:uid', requireAuth, async (req, res) => {
     if (req.userDoc.role !== 'admin') {
