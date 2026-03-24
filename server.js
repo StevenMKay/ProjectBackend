@@ -389,6 +389,129 @@ app.delete('/api/tenant/members/:uid', requireAuth, async (req, res) => {
 });
 
 // ============================================================
+// EMAIL — nodemailer (configure via Railway env vars)
+// SMTP_HOST, SMTP_PORT (587), SMTP_USER, SMTP_PASS, SMTP_FROM_NAME
+// ============================================================
+const nodemailer = require('nodemailer');
+
+let emailTransporter = null;
+if (process.env.SMTP_HOST && process.env.SMTP_USER && process.env.SMTP_PASS) {
+    emailTransporter = nodemailer.createTransport({
+        host: process.env.SMTP_HOST,
+        port: parseInt(process.env.SMTP_PORT || '587'),
+        secure: parseInt(process.env.SMTP_PORT || '587') === 465,
+        auth: { user: process.env.SMTP_USER, pass: process.env.SMTP_PASS },
+        tls: { rejectUnauthorized: false }
+    });
+    console.log('[Email] SMTP configured:', process.env.SMTP_USER);
+} else {
+    console.warn('[Email] SMTP not configured. Set SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASS on Railway.');
+}
+
+const FROM_NAME  = process.env.SMTP_FROM_NAME || 'NotebookPM';
+const FROM_EMAIL = process.env.SMTP_USER || '';
+
+async function sendCustomEmail({ to, subject, html }) {
+    if (!emailTransporter) throw new Error('SMTP not configured on server. Add SMTP_HOST, SMTP_USER, SMTP_PASS to Railway env vars.');
+    await emailTransporter.sendMail({ from: `"${FROM_NAME}" <${FROM_EMAIL}>`, to, subject, html });
+}
+
+function buildInviteEmailHtml({ displayName, inviterName, companyName, link }) {
+    const inviterDisplay  = inviterName  || 'Your team admin';
+    const companyDisplay  = companyName && companyName !== 'Notebook' ? companyName : 'NotebookPM';
+    const recipientGreet  = displayName ? `Hi ${displayName},` : 'Hi there,';
+    return `<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head>
+<body style="margin:0;padding:0;background:#f1f5f9;font-family:'Segoe UI',Helvetica,Arial,sans-serif;">
+<table width="100%" cellpadding="0" cellspacing="0" style="background:#f1f5f9;padding:40px 16px;"><tr><td align="center">
+<table width="100%" style="max-width:560px;" cellpadding="0" cellspacing="0"><tr><td style="background:#fff;border-radius:14px;overflow:hidden;box-shadow:0 4px 20px rgba(0,0,0,0.08);">
+  <table width="100%" cellpadding="0" cellspacing="0"><tr><td style="background:linear-gradient(135deg,#1e40af 0%,#3b82f6 100%);padding:32px 40px;text-align:center;">
+    <div style="font-size:24px;font-weight:800;color:#fff;letter-spacing:-0.5px;">NotebookPM</div>
+    <div style="font-size:12px;color:rgba(255,255,255,0.7);margin-top:4px;letter-spacing:0.3px;">PROJECT &amp; TEAM MANAGEMENT</div>
+  </td></tr></table>
+  <table width="100%" cellpadding="0" cellspacing="0"><tr><td style="padding:36px 40px;">
+    <h2 style="margin:0 0 16px;font-size:22px;color:#0f172a;font-weight:700;">You've been invited!</h2>
+    <p style="margin:0 0 14px;color:#475569;font-size:15px;line-height:1.65;">${recipientGreet}</p>
+    <p style="margin:0 0 14px;color:#475569;font-size:15px;line-height:1.65;"><strong style="color:#1e293b;">${inviterDisplay}</strong> has invited you to join <strong style="color:#1e293b;">${companyDisplay}</strong> on <strong style="color:#2563eb;">NotebookPM</strong> &mdash; a shared workspace for managing projects and collaborating with your team.</p>
+    <p style="margin:0 0 28px;color:#475569;font-size:15px;line-height:1.65;">Click the button below to set your password and activate your account.</p>
+    <table cellpadding="0" cellspacing="0" style="margin:0 0 28px;"><tr><td style="background:#2563eb;border-radius:8px;box-shadow:0 2px 8px rgba(37,99,235,0.35);">
+      <a href="${link}" style="display:inline-block;padding:15px 36px;color:#fff;font-weight:700;font-size:16px;text-decoration:none;">Set My Password &rarr;</a>
+    </td></tr></table>
+    <table width="100%" cellpadding="0" cellspacing="0" style="margin:0 0 20px;"><tr><td style="background:#eff6ff;border:1px solid #bfdbfe;border-radius:8px;padding:16px 20px;">
+      <p style="margin:0 0 6px;font-size:13px;color:#1e40af;font-weight:700;">After setting your password:</p>
+      <p style="margin:0;font-size:13px;color:#3b82f6;line-height:1.6;">Visit <a href="https://notebookpm.com" style="color:#1d4ed8;font-weight:700;text-decoration:none;">NotebookPM.com</a> and sign in with your email address to access your workspace.</p>
+    </td></tr></table>
+    <p style="margin:0;color:#94a3b8;font-size:12px;line-height:1.6;">If you didn't expect this invitation, you can safely ignore this email. The link expires in 24 hours.</p>
+  </td></tr></table>
+  <table width="100%" cellpadding="0" cellspacing="0"><tr><td style="background:#f8fafc;border-top:1px solid #e2e8f0;padding:18px 40px;text-align:center;">
+    <p style="margin:0;color:#94a3b8;font-size:12px;">NotebookPM &nbsp;&middot;&nbsp; <a href="https://notebookpm.com" style="color:#64748b;text-decoration:none;">notebookpm.com</a></p>
+  </td></tr></table>
+</td></tr></table>
+</td></tr></table></body></html>`;
+}
+
+function buildResetEmailHtml({ displayName, link }) {
+    const recipientGreet = displayName ? `Hi ${displayName},` : 'Hi there,';
+    return `<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head>
+<body style="margin:0;padding:0;background:#f1f5f9;font-family:'Segoe UI',Helvetica,Arial,sans-serif;">
+<table width="100%" cellpadding="0" cellspacing="0" style="background:#f1f5f9;padding:40px 16px;"><tr><td align="center">
+<table width="100%" style="max-width:560px;" cellpadding="0" cellspacing="0"><tr><td style="background:#fff;border-radius:14px;overflow:hidden;box-shadow:0 4px 20px rgba(0,0,0,0.08);">
+  <table width="100%" cellpadding="0" cellspacing="0"><tr><td style="background:linear-gradient(135deg,#1e40af 0%,#3b82f6 100%);padding:32px 40px;text-align:center;">
+    <div style="font-size:24px;font-weight:800;color:#fff;letter-spacing:-0.5px;">NotebookPM</div>
+    <div style="font-size:12px;color:rgba(255,255,255,0.7);margin-top:4px;letter-spacing:0.3px;">PROJECT &amp; TEAM MANAGEMENT</div>
+  </td></tr></table>
+  <table width="100%" cellpadding="0" cellspacing="0"><tr><td style="padding:36px 40px;">
+    <h2 style="margin:0 0 16px;font-size:22px;color:#0f172a;font-weight:700;">Password Reset</h2>
+    <p style="margin:0 0 14px;color:#475569;font-size:15px;line-height:1.65;">${recipientGreet}</p>
+    <p style="margin:0 0 28px;color:#475569;font-size:15px;line-height:1.65;">A password reset has been requested for your <strong style="color:#1e293b;">NotebookPM</strong> account. Click below to choose a new password.</p>
+    <table cellpadding="0" cellspacing="0" style="margin:0 0 28px;"><tr><td style="background:#2563eb;border-radius:8px;box-shadow:0 2px 8px rgba(37,99,235,0.35);">
+      <a href="${link}" style="display:inline-block;padding:15px 36px;color:#fff;font-weight:700;font-size:16px;text-decoration:none;">Reset My Password &rarr;</a>
+    </td></tr></table>
+    <table width="100%" cellpadding="0" cellspacing="0" style="margin:0 0 20px;"><tr><td style="background:#eff6ff;border:1px solid #bfdbfe;border-radius:8px;padding:16px 20px;">
+      <p style="margin:0 0 6px;font-size:13px;color:#1e40af;font-weight:700;">After resetting your password:</p>
+      <p style="margin:0;font-size:13px;color:#3b82f6;line-height:1.6;">Visit <a href="https://notebookpm.com" style="color:#1d4ed8;font-weight:700;text-decoration:none;">NotebookPM.com</a> and sign in with your email address.</p>
+    </td></tr></table>
+    <p style="margin:0;color:#94a3b8;font-size:12px;line-height:1.6;">If you did not request this, you can safely ignore this email. The link expires in 1 hour.</p>
+  </td></tr></table>
+  <table width="100%" cellpadding="0" cellspacing="0"><tr><td style="background:#f8fafc;border-top:1px solid #e2e8f0;padding:18px 40px;text-align:center;">
+    <p style="margin:0;color:#94a3b8;font-size:12px;">NotebookPM &nbsp;&middot;&nbsp; <a href="https://notebookpm.com" style="color:#64748b;text-decoration:none;">notebookpm.com</a></p>
+  </td></tr></table>
+</td></tr></table>
+</td></tr></table></body></html>`;
+}
+
+// Send branded invite email (admin only)
+app.post('/api/tenant/send-invite-email', requireAuth, async (req, res) => {
+    if (req.userDoc.role !== 'admin') return res.status(403).json({ error: 'Admins only' });
+    const { email, displayName, inviterName, companyName } = req.body;
+    if (!email) return res.status(400).json({ error: 'email is required' });
+    try {
+        const link = await auth.generatePasswordResetLink(email, { url: 'https://notebookpm.com', handleCodeInApp: false });
+        await sendCustomEmail({ to: email, subject: `You've been invited to join NotebookPM`, html: buildInviteEmailHtml({ displayName, inviterName, companyName, link }) });
+        res.json({ success: true });
+    } catch (err) {
+        console.error('[Email] Invite failed:', err.message);
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// Send password reset email to an existing member (admin only)
+app.post('/api/tenant/members/:uid/send-reset', requireAuth, async (req, res) => {
+    if (req.userDoc.role !== 'admin') return res.status(403).json({ error: 'Admins only' });
+    const { uid } = req.params;
+    try {
+        const doc = await db.collection('users').doc(uid).get();
+        if (!doc.exists || doc.data().tenantId !== req.userDoc.tenantId) return res.status(404).json({ error: 'Member not found' });
+        const { email, displayName } = doc.data();
+        const link = await auth.generatePasswordResetLink(email, { url: 'https://notebookpm.com', handleCodeInApp: false });
+        await sendCustomEmail({ to: email, subject: 'Reset your NotebookPM password', html: buildResetEmailHtml({ displayName, link }) });
+        res.json({ success: true });
+    } catch (err) {
+        console.error('[Email] Reset failed:', err.message);
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// ============================================================
 // BILLING ROUTES — STRIPE SUBSCRIPTIONS
 // ============================================================
 
