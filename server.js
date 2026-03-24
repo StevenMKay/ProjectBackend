@@ -420,6 +420,7 @@ function buildInviteEmailHtml({ displayName, inviterName, companyName, link }) {
     const inviterDisplay  = inviterName  || 'Your team admin';
     const companyDisplay  = companyName && companyName !== 'Notebook' ? companyName : 'NotebookPM';
     const recipientGreet  = displayName ? `Hi ${displayName},` : 'Hi there,';
+    const LOGO = 'https://raw.githubusercontent.com/StevenMKay/CareerSolutionsForToday/0205845e0a19b0d6f83005dc19f37741fc82e403/icons/CareerIcon.png';
     return `<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head>
 <body style="margin:0;padding:0;background:#f1f5f9;font-family:'Segoe UI',Helvetica,Arial,sans-serif;">
 <table width="100%" cellpadding="0" cellspacing="0" style="background:#f1f5f9;padding:40px 16px;"><tr><td align="center">
@@ -436,14 +437,22 @@ function buildInviteEmailHtml({ displayName, inviterName, companyName, link }) {
     <table cellpadding="0" cellspacing="0" style="margin:0 0 28px;"><tr><td style="background:#2563eb;border-radius:8px;box-shadow:0 2px 8px rgba(37,99,235,0.35);">
       <a href="${link}" style="display:inline-block;padding:15px 36px;color:#fff;font-weight:700;font-size:16px;text-decoration:none;">Set My Password &rarr;</a>
     </td></tr></table>
-    <table width="100%" cellpadding="0" cellspacing="0" style="margin:0 0 20px;"><tr><td style="background:#eff6ff;border:1px solid #bfdbfe;border-radius:8px;padding:16px 20px;">
+    <table width="100%" cellpadding="0" cellspacing="0" style="margin:0 0 28px;"><tr><td style="background:#eff6ff;border:1px solid #bfdbfe;border-radius:8px;padding:16px 20px;">
       <p style="margin:0 0 6px;font-size:13px;color:#1e40af;font-weight:700;">After setting your password:</p>
       <p style="margin:0;font-size:13px;color:#3b82f6;line-height:1.6;">Visit <a href="https://notebookpm.com" style="color:#1d4ed8;font-weight:700;text-decoration:none;">NotebookPM.com</a> and sign in with your email address to access your workspace.</p>
     </td></tr></table>
+    <table width="100%" cellpadding="0" cellspacing="0" style="margin:0 0 20px;border-top:1px solid #e2e8f0;padding-top:20px;"><tr>
+      <td style="width:52px;vertical-align:middle;"><img src="${LOGO}" alt="Career Solutions" width="44" height="44" style="border-radius:8px;display:block;"></td>
+      <td style="padding-left:14px;vertical-align:middle;">
+        <div style="font-size:13px;font-weight:700;color:#1e293b;">Career Solutions for Today</div>
+        <div style="font-size:12px;color:#64748b;margin-top:2px;">Empowering careers, one project at a time.</div>
+        <div style="font-size:12px;margin-top:2px;"><a href="https://careersolutionsfortoday.com" style="color:#2563eb;text-decoration:none;">careersolutionsfortoday.com</a></div>
+      </td>
+    </tr></table>
     <p style="margin:0;color:#94a3b8;font-size:12px;line-height:1.6;">If you didn't expect this invitation, you can safely ignore this email. The link expires in 24 hours.</p>
   </td></tr></table>
   <table width="100%" cellpadding="0" cellspacing="0"><tr><td style="background:#f8fafc;border-top:1px solid #e2e8f0;padding:18px 40px;text-align:center;">
-    <p style="margin:0;color:#94a3b8;font-size:12px;">NotebookPM &nbsp;&middot;&nbsp; <a href="https://notebookpm.com" style="color:#64748b;text-decoration:none;">notebookpm.com</a></p>
+    <p style="margin:0;color:#94a3b8;font-size:12px;">NotebookPM &nbsp;&middot;&nbsp; <a href="https://notebookpm.com" style="color:#64748b;text-decoration:none;">notebookpm.com</a> &nbsp;&middot;&nbsp; Powered by Career Solutions for Today</p>
   </td></tr></table>
 </td></tr></table>
 </td></tr></table></body></html>`;
@@ -451,6 +460,7 @@ function buildInviteEmailHtml({ displayName, inviterName, companyName, link }) {
 
 function buildResetEmailHtml({ displayName, link }) {
     const recipientGreet = displayName ? `Hi ${displayName},` : 'Hi there,';
+    const LOGO = 'https://raw.githubusercontent.com/StevenMKay/CareerSolutionsForToday/0205845e0a19b0d6f83005dc19f37741fc82e403/icons/CareerIcon.png';
     return `<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head>
 <body style="margin:0;padding:0;background:#f1f5f9;font-family:'Segoe UI',Helvetica,Arial,sans-serif;">
 <table width="100%" cellpadding="0" cellspacing="0" style="background:#f1f5f9;padding:40px 16px;"><tr><td align="center">
@@ -466,14 +476,22 @@ function buildResetEmailHtml({ displayName, link }) {
     <table cellpadding="0" cellspacing="0" style="margin:0 0 28px;"><tr><td style="background:#2563eb;border-radius:8px;box-shadow:0 2px 8px rgba(37,99,235,0.35);">
       <a href="${link}" style="display:inline-block;padding:15px 36px;color:#fff;font-weight:700;font-size:16px;text-decoration:none;">Reset My Password &rarr;</a>
     </td></tr></table>
-    <table width="100%" cellpadding="0" cellspacing="0" style="margin:0 0 20px;"><tr><td style="background:#eff6ff;border:1px solid #bfdbfe;border-radius:8px;padding:16px 20px;">
+    <table width="100%" cellpadding="0" cellspacing="0" style="margin:0 0 28px;"><tr><td style="background:#eff6ff;border:1px solid #bfdbfe;border-radius:8px;padding:16px 20px;">
       <p style="margin:0 0 6px;font-size:13px;color:#1e40af;font-weight:700;">After resetting your password:</p>
       <p style="margin:0;font-size:13px;color:#3b82f6;line-height:1.6;">Visit <a href="https://notebookpm.com" style="color:#1d4ed8;font-weight:700;text-decoration:none;">NotebookPM.com</a> and sign in with your email address.</p>
     </td></tr></table>
+    <table width="100%" cellpadding="0" cellspacing="0" style="margin:0 0 20px;border-top:1px solid #e2e8f0;padding-top:20px;"><tr>
+      <td style="width:52px;vertical-align:middle;"><img src="${LOGO}" alt="Career Solutions" width="44" height="44" style="border-radius:8px;display:block;"></td>
+      <td style="padding-left:14px;vertical-align:middle;">
+        <div style="font-size:13px;font-weight:700;color:#1e293b;">Career Solutions for Today</div>
+        <div style="font-size:12px;color:#64748b;margin-top:2px;">Empowering careers, one project at a time.</div>
+        <div style="font-size:12px;margin-top:2px;"><a href="https://careersolutionsfortoday.com" style="color:#2563eb;text-decoration:none;">careersolutionsfortoday.com</a></div>
+      </td>
+    </tr></table>
     <p style="margin:0;color:#94a3b8;font-size:12px;line-height:1.6;">If you did not request this, you can safely ignore this email. The link expires in 1 hour.</p>
   </td></tr></table>
   <table width="100%" cellpadding="0" cellspacing="0"><tr><td style="background:#f8fafc;border-top:1px solid #e2e8f0;padding:18px 40px;text-align:center;">
-    <p style="margin:0;color:#94a3b8;font-size:12px;">NotebookPM &nbsp;&middot;&nbsp; <a href="https://notebookpm.com" style="color:#64748b;text-decoration:none;">notebookpm.com</a></p>
+    <p style="margin:0;color:#94a3b8;font-size:12px;">NotebookPM &nbsp;&middot;&nbsp; <a href="https://notebookpm.com" style="color:#64748b;text-decoration:none;">notebookpm.com</a> &nbsp;&middot;&nbsp; Powered by Career Solutions for Today</p>
   </td></tr></table>
 </td></tr></table>
 </td></tr></table></body></html>`;
