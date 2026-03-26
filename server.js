@@ -1,6 +1,7 @@
 require('dotenv').config();
 const express = require('express');
 const cors    = require('cors');
+const crypto  = require('crypto');
 const admin   = require('firebase-admin');
 const { getFirestore } = require('firebase-admin/firestore');
 const Stripe  = require('stripe');
@@ -325,9 +326,26 @@ app.get('/api/tenant/members', requireAuth, async (req, res) => {
 });
 
 // Invite a new member to the caller's tenant (admin only)
-// Creates a Firebase Auth account + Firestore profile.
-// The front-end should call auth.sendPasswordResetEmail(email) afterwards
-// so the invitee receives a "set your password" email from Firebase.
+// Creates a Firebase Auth account + Firestore profile + invite token.
+// The front-end passes the token to /api/tenant/send-invite-email
+// so the invitee receives a branded "set your password" email.
+
+// Generate a secure invite token and store it in Firestore
+async function generateInviteToken({ uid, email, tenantId }) {
+    const token = crypto.randomBytes(32).toString('hex');
+    const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString(); // 7 days
+    await db.collection('inviteTokens').doc(token).set({
+        uid,
+        email,
+        tenantId,
+        expiresAt,
+        used: false,
+        attempts: 0,
+        createdAt: new Date().toISOString()
+    });
+    return token;
+}
+
 app.post('/api/tenant/invite', requireAuth, async (req, res) => {
     if (req.userDoc.role !== 'admin') {
         return res.status(403).json({ error: 'Only team admins can invite members' });
@@ -356,7 +374,9 @@ app.post('/api/tenant/invite', requireAuth, async (req, res) => {
             role: (role === 'admin' ? 'admin' : role === 'viewer' ? 'viewer' : 'member'),
             createdAt: new Date().toISOString()
         });
-        res.json({ success: true, uid: userRecord.uid });
+        // Generate invite token for password setup
+        const token = await generateInviteToken({ uid: userRecord.uid, email, tenantId });
+        res.json({ success: true, uid: userRecord.uid, inviteToken: token });
     } catch (err) {
         if (err.code === 'auth/email-already-exists') {
             return res.status(409).json({ error: 'This email already has an account.' });
@@ -411,6 +431,62 @@ app.delete('/api/tenant/members/:uid', requireAuth, async (req, res) => {
     } catch (err) {
         console.error(err);
         res.status(500).json({ error: err.message || 'Failed to remove member' });
+    }
+});
+
+// ============================================================
+// INVITE TOKEN ENDPOINTS (unauthenticated — token IS the auth)
+// ============================================================
+
+// Validate an invite token — safe for email link prefetchers (read-only)
+app.post('/api/invite/validate', express.json(), async (req, res) => {
+    if (!db) return res.status(503).json({ valid: false, reason: 'Backend not configured' });
+    const { token } = req.body;
+    if (!token || typeof token !== 'string') return res.json({ valid: false, reason: 'Missing token' });
+    try {
+        const doc = await db.collection('inviteTokens').doc(token).get();
+        if (!doc.exists) return res.json({ valid: false, reason: 'Invalid or expired link. Ask your admin to resend the invitation.' });
+        const data = doc.data();
+        if (data.used) return res.json({ valid: false, reason: 'This setup link has already been used. Sign in with your email and password, or click "Forgot password?" if needed.' });
+        if (new Date(data.expiresAt) < new Date()) return res.json({ valid: false, reason: 'This setup link has expired. Ask your admin to resend the invitation.' });
+        // Look up display name from user doc
+        const userDoc = await db.collection('users').doc(data.uid).get();
+        const displayName = userDoc.exists ? (userDoc.data().displayName || '') : '';
+        res.json({ valid: true, email: data.email, displayName });
+    } catch (err) {
+        console.error('[Invite] Validate error:', err.message);
+        res.status(500).json({ valid: false, reason: 'Server error. Please try again.' });
+    }
+});
+
+// Accept an invite token — set the user's password
+app.post('/api/invite/accept', express.json(), async (req, res) => {
+    if (!db || !auth) return res.status(503).json({ error: 'Backend not configured' });
+    const { token, password } = req.body;
+    if (!token || typeof token !== 'string') return res.status(400).json({ error: 'Missing token' });
+    if (!password || typeof password !== 'string') return res.status(400).json({ error: 'Password is required' });
+    if (password.length < 8) return res.status(400).json({ error: 'Password must be at least 8 characters' });
+    if (!/[a-zA-Z]/.test(password) || !/[0-9]/.test(password)) {
+        return res.status(400).json({ error: 'Password must contain at least one letter and one number' });
+    }
+    try {
+        const docRef = db.collection('inviteTokens').doc(token);
+        const doc = await docRef.get();
+        if (!doc.exists) return res.status(400).json({ error: 'Invalid or expired link. Ask your admin to resend the invitation.' });
+        const data = doc.data();
+        if (data.used) return res.status(400).json({ error: 'This setup link has already been used. Sign in with your email and password, or click "Forgot password?" if needed.' });
+        if (new Date(data.expiresAt) < new Date()) return res.status(400).json({ error: 'This setup link has expired. Ask your admin to resend the invitation.' });
+        // Rate limit: max 5 attempts per token
+        if ((data.attempts || 0) >= 5) return res.status(429).json({ error: 'Too many attempts. Ask your admin to resend the invitation.' });
+        await docRef.update({ attempts: (data.attempts || 0) + 1 });
+        // Set the user's password via Admin SDK
+        await auth.updateUser(data.uid, { password });
+        // Mark token as used
+        await docRef.update({ used: true, usedAt: new Date().toISOString() });
+        res.json({ success: true, email: data.email });
+    } catch (err) {
+        console.error('[Invite] Accept error:', err.message);
+        res.status(500).json({ error: 'Failed to set password. Please try again.' });
     }
 });
 
@@ -470,7 +546,7 @@ function buildInviteEmailHtml({ displayName, inviterName, companyName, link }) {
         <div style="font-size:12px;margin-top:2px;"><a href="https://careersolutionsfortoday.com" style="color:#2563eb;text-decoration:none;">careersolutionsfortoday.com</a></div>
       </td>
     </tr></table>
-    <p style="margin:0;color:#94a3b8;font-size:12px;line-height:1.6;">If you didn't expect this invitation, you can safely ignore this email. The link expires in 24 hours.</p>
+    <p style="margin:0;color:#94a3b8;font-size:12px;line-height:1.6;">If you didn't expect this invitation, you can safely ignore this email. The link expires in 7 days.</p>
   </td></tr></table>
   <table width="100%" cellpadding="0" cellspacing="0"><tr><td style="background:#f8fafc;border-top:1px solid #e2e8f0;padding:18px 40px;text-align:center;">
     <p style="margin:0;color:#94a3b8;font-size:12px;">NotebookPM &nbsp;&middot;&nbsp; <a href="https://notebookpm.com" style="color:#64748b;text-decoration:none;">notebookpm.com</a> &nbsp;&middot;&nbsp; Powered by Career Solutions for Today</p>
@@ -509,7 +585,7 @@ function buildResetEmailHtml({ displayName, link }) {
         <div style="font-size:12px;margin-top:2px;"><a href="https://careersolutionsfortoday.com" style="color:#2563eb;text-decoration:none;">careersolutionsfortoday.com</a></div>
       </td>
     </tr></table>
-    <p style="margin:0;color:#94a3b8;font-size:12px;line-height:1.6;">If you did not request this, you can safely ignore this email. The link expires in 1 hour.</p>
+    <p style="margin:0;color:#94a3b8;font-size:12px;line-height:1.6;">If you did not request this, you can safely ignore this email. The link expires in 7 days.</p>
   </td></tr></table>
   <table width="100%" cellpadding="0" cellspacing="0"><tr><td style="background:#f8fafc;border-top:1px solid #e2e8f0;padding:18px 40px;text-align:center;">
     <p style="margin:0;color:#94a3b8;font-size:12px;">NotebookPM &nbsp;&middot;&nbsp; <a href="https://notebookpm.com" style="color:#64748b;text-decoration:none;">notebookpm.com</a> &nbsp;&middot;&nbsp; Powered by Career Solutions for Today</p>
@@ -521,10 +597,11 @@ function buildResetEmailHtml({ displayName, link }) {
 // Send branded invite email (admin only)
 app.post('/api/tenant/send-invite-email', requireAuth, async (req, res) => {
     if (req.userDoc.role !== 'admin') return res.status(403).json({ error: 'Admins only' });
-    const { email, displayName, inviterName, companyName } = req.body;
+    const { email, displayName, inviterName, companyName, inviteToken } = req.body;
     if (!email) return res.status(400).json({ error: 'email is required' });
+    if (!inviteToken) return res.status(400).json({ error: 'inviteToken is required' });
     try {
-        const link = await auth.generatePasswordResetLink(email, { url: 'https://notebookpm.com', handleCodeInApp: false });
+        const link = `https://notebookpm.com/ProjectTracker.html?invite=${inviteToken}`;
         await sendCustomEmail({ to: email, subject: `You've been invited to join NotebookPM`, html: buildInviteEmailHtml({ displayName, inviterName, companyName, link }) });
         res.json({ success: true });
     } catch (err) {
@@ -534,14 +611,16 @@ app.post('/api/tenant/send-invite-email', requireAuth, async (req, res) => {
 });
 
 // Send password reset email to an existing member (admin only)
+// Generates a fresh invite token so the member can set a new password
 app.post('/api/tenant/members/:uid/send-reset', requireAuth, async (req, res) => {
     if (req.userDoc.role !== 'admin') return res.status(403).json({ error: 'Admins only' });
     const { uid } = req.params;
     try {
         const doc = await db.collection('users').doc(uid).get();
         if (!doc.exists || doc.data().tenantId !== req.userDoc.tenantId) return res.status(404).json({ error: 'Member not found' });
-        const { email, displayName } = doc.data();
-        const link = await auth.generatePasswordResetLink(email, { url: 'https://notebookpm.com', handleCodeInApp: false });
+        const { email, displayName, tenantId } = doc.data();
+        const token = await generateInviteToken({ uid, email, tenantId });
+        const link = `https://notebookpm.com/ProjectTracker.html?invite=${token}`;
         await sendCustomEmail({ to: email, subject: 'Reset your NotebookPM password', html: buildResetEmailHtml({ displayName, link }) });
         res.json({ success: true });
     } catch (err) {
@@ -664,10 +743,20 @@ app.post('/api/billing/webhook',
                     createdAt: new Date().toISOString()
                 });
 
-                // 4. Generate a password-reset link so the buyer sets their own password
-                //    (send via your email provider: SendGrid, Resend, etc.)
-                const resetLink = await auth.generatePasswordResetLink(adminEmail);
-                console.log('[Billing] Provisioned:', tenantId, '| Admin:', adminEmail, '| Reset:', resetLink);
+                // 4. Generate invite token and email setup link to the buyer
+                const inviteToken = await generateInviteToken({ uid: userRecord.uid, email: adminEmail, tenantId });
+                const setupLink = `https://notebookpm.com/ProjectTracker.html?invite=${inviteToken}`;
+                console.log('[Billing] Provisioned:', tenantId, '| Admin:', adminEmail);
+                try {
+                    await sendCustomEmail({
+                        to: adminEmail,
+                        subject: 'Your NotebookPM account is ready!',
+                        html: buildInviteEmailHtml({ displayName: companyName + ' Admin', inviterName: 'NotebookPM', companyName, link: setupLink })
+                    });
+                    console.log('[Billing] Setup email sent to', adminEmail);
+                } catch (emailErr) {
+                    console.error('[Billing] Setup email failed for', adminEmail, emailErr.message, '| Manual link:', setupLink);
+                }
 
             } catch (err) {
                 console.error('[Billing] Provisioning error for', tenantId, err.message);
