@@ -452,7 +452,13 @@ app.post('/api/invite/validate', express.json(), async (req, res) => {
         // Look up display name from user doc
         const userDoc = await db.collection('users').doc(data.uid).get();
         const displayName = userDoc.exists ? (userDoc.data().displayName || '') : '';
-        res.json({ valid: true, email: data.email, displayName });
+        // Look up company name from tenant
+        let companyName = '';
+        if (data.tenantId) {
+            const tenantDoc = await db.collection('tenants').doc(data.tenantId).get();
+            companyName = tenantDoc.exists ? (tenantDoc.data().companyName || '') : '';
+        }
+        res.json({ valid: true, email: data.email, displayName, companyName });
     } catch (err) {
         console.error('[Invite] Validate error:', err.message);
         res.status(500).json({ valid: false, reason: 'Server error. Please try again.' });
@@ -630,6 +636,47 @@ app.post('/api/tenant/members/:uid/send-reset', requireAuth, async (req, res) =>
 });
 
 // ============================================================
+// TENANT INFO — account & subscription data for the dashboard
+// ============================================================
+app.get('/api/tenant/info', requireAuth, async (req, res) => {
+    try {
+        const tenantId = req.userDoc.tenantId;
+        const tenantDoc = await db.collection('tenants').doc(tenantId).get();
+        if (!tenantDoc.exists) return res.json({ plan: 'free', maxSeats: 1, memberCount: 1, active: true });
+        const data = tenantDoc.data();
+        const members = await db.collection('users').where('tenantId', '==', tenantId).get();
+        let subscriptionStatus = null;
+        let trialEnd = null;
+        let currentPeriodEnd = null;
+        let cancelAtPeriodEnd = false;
+        if (stripe && data.stripeSubscriptionId) {
+            try {
+                const sub = await stripe.subscriptions.retrieve(data.stripeSubscriptionId);
+                subscriptionStatus = sub.status;
+                trialEnd = sub.trial_end ? new Date(sub.trial_end * 1000).toISOString() : null;
+                currentPeriodEnd = sub.current_period_end ? new Date(sub.current_period_end * 1000).toISOString() : null;
+                cancelAtPeriodEnd = sub.cancel_at_period_end || false;
+            } catch (e) { console.warn('[Billing] Could not fetch subscription:', e.message); }
+        }
+        res.json({
+            tenantId,
+            companyName: data.companyName || '',
+            plan: data.plan || 'standard',
+            maxSeats: data.maxSeats || 10,
+            memberCount: members.size,
+            active: data.active !== false,
+            subscriptionStatus,
+            trialEnd,
+            currentPeriodEnd,
+            cancelAtPeriodEnd
+        });
+    } catch (err) {
+        console.error('[Tenant] Info error:', err.message);
+        res.status(500).json({ error: 'Failed to load account info' });
+    }
+});
+
+// ============================================================
 // BILLING ROUTES — STRIPE SUBSCRIPTIONS
 // ============================================================
 
@@ -667,6 +714,9 @@ app.post('/api/billing/checkout', async (req, res) => {
             payment_method_types: ['card'],
             customer_email: adminEmail,
             line_items: [{ price: priceId, quantity: 1 }],
+            subscription_data: {
+                trial_period_days: 7,
+            },
             metadata: {
                 companyName,
                 tenantId,
@@ -685,6 +735,27 @@ app.post('/api/billing/checkout', async (req, res) => {
     } catch (err) {
         console.error('[Billing] Outer checkout error:', err.message);
         res.status(500).json({ error: err.message || 'Server error' });
+    }
+});
+
+// Create Stripe Customer Portal session — lets users manage subscription
+app.post('/api/billing/portal', requireAuth, async (req, res) => {
+    if (req.userDoc.role !== 'admin') return res.status(403).json({ error: 'Only admins can manage billing' });
+    try {
+        if (!stripe) return res.status(503).json({ error: 'Billing not configured' });
+        const tenantId = req.userDoc.tenantId;
+        const tenantDoc = await db.collection('tenants').doc(tenantId).get();
+        if (!tenantDoc.exists || !tenantDoc.data().stripeCustomerId) {
+            return res.status(400).json({ error: 'No billing account found. Contact support.' });
+        }
+        const session = await stripe.billingPortal.sessions.create({
+            customer: tenantDoc.data().stripeCustomerId,
+            return_url: `${process.env.SITE_URL || 'https://www.careersolutionsfortoday.com'}/ProjectTracker.html`,
+        });
+        res.json({ url: session.url });
+    } catch (err) {
+        console.error('[Billing] Portal error:', err.message);
+        res.status(500).json({ error: 'Failed to open billing portal' });
     }
 });
 
