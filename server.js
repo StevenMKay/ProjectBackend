@@ -5,6 +5,11 @@ const crypto  = require('crypto');
 const admin   = require('firebase-admin');
 const { getFirestore } = require('firebase-admin/firestore');
 const Stripe  = require('stripe');
+const multer  = require('multer');
+const pdfParse = require('pdf-parse');
+
+// Multer: in-memory storage for resume uploads (max 10MB)
+const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } });
 
 // Stripe init (graceful if key not set yet)
 const stripe = process.env.STRIPE_SECRET_KEY && !process.env.STRIPE_SECRET_KEY.startsWith('YOUR_')
@@ -849,6 +854,226 @@ app.post('/api/billing/webhook',
         res.json({ received: true });
     }
 );
+
+// ============================================================
+// RESUME BUILDER API ROUTES
+// ============================================================
+
+// Soft auth: tries to resolve user & tenant from token, but doesn't block if missing
+async function optionalAuth(req, res, next) {
+    const token = (req.headers.authorization || '').replace('Bearer ', '').trim();
+    if (!token || !adminInitialised) return next();
+    try {
+        const decoded = await auth.verifyIdToken(token);
+        req.uid = decoded.uid;
+        // Always try the real Firestore user doc first (has the actual tenantId)
+        const doc = await db.collection('users').doc(decoded.uid).get();
+        if (doc.exists) {
+            req.userDoc = doc.data();
+        } else if (OWNER_UIDS_ADMIN.includes(decoded.uid)) {
+            req.userDoc = { tenantId: 'admin', role: 'admin', email: decoded.email || '' };
+        }
+    } catch (e) { /* ignore auth errors — continue without user context */ }
+    next();
+}
+
+// Helper: get OpenAI key from env or Firestore tenant settings (same key the Project Tracker uses)
+async function getOpenAIKey(req) {
+    // 1. Prefer env var if set
+    if (process.env.OPENAI_API_KEY) return process.env.OPENAI_API_KEY;
+    // 2. Fall back to tenant's stored AI key in Firestore
+    if (db && req.userDoc && req.userDoc.tenantId) {
+        const doc = await db.collection('tenants').doc(req.userDoc.tenantId)
+            .collection('settings').doc('extended').get();
+        if (doc.exists && doc.data().aiApiKey) return doc.data().aiApiKey;
+    }
+    // 3. For site owner: scan all tenants for a key (owner may not have a user doc)
+    if (db && req.uid && OWNER_UIDS_ADMIN.includes(req.uid)) {
+        const snap = await db.collection('tenants').limit(5).get();
+        for (const tdoc of snap.docs) {
+            const settingsDoc = await db.collection('tenants').doc(tdoc.id)
+                .collection('settings').doc('extended').get();
+            if (settingsDoc.exists && settingsDoc.data().aiApiKey) return settingsDoc.data().aiApiKey;
+        }
+    }
+    return null;
+}
+
+// Helper: call OpenAI chat completions
+async function callOpenAI(apiKey, systemPrompt, userPrompt, model) {
+    const res = await fetch('https://api.openai.com/v1/chat/completions', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + apiKey },
+        body: JSON.stringify({
+            model: model || 'gpt-4o',
+            messages: [
+                { role: 'system', content: systemPrompt },
+                { role: 'user',   content: userPrompt }
+            ],
+            max_tokens: 4000,
+            temperature: 0.7
+        })
+    });
+    if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.error ? err.error.message : 'OpenAI API error ' + res.status);
+    }
+    const data = await res.json();
+    if (!data.choices || !data.choices[0]) throw new Error('No response from OpenAI');
+    return data.choices[0].message.content;
+}
+
+// Helper: extract text from uploaded file buffer
+async function extractTextFromFile(file) {
+    const ext = (file.originalname || '').split('.').pop().toLowerCase();
+    if (ext === 'pdf') {
+        const data = await pdfParse(file.buffer);
+        return data.text;
+    }
+    // For txt, docx (plain text fallback), and other text-based formats
+    return file.buffer.toString('utf-8');
+}
+
+// POST /api/builder/parse-resume
+// Accepts multipart: file OR text field
+app.post('/api/builder/parse-resume', optionalAuth, upload.single('file'), async (req, res) => {
+    try {
+        let resumeText = '';
+        if (req.file) {
+            resumeText = await extractTextFromFile(req.file);
+        } else if (req.body && req.body.text) {
+            resumeText = req.body.text;
+        }
+        if (!resumeText || !resumeText.trim()) {
+            return res.status(400).json({ error: 'No resume content provided' });
+        }
+
+        const apiKey = await getOpenAIKey(req);
+        if (!apiKey) return res.status(500).json({ error: 'No AI API key found. Configure one in Project Tracker Admin → AI Settings, or set OPENAI_API_KEY env var.' });
+
+        const systemPrompt = `You are a resume parsing expert. Extract structured data from the resume text provided. Return ONLY valid JSON (no markdown fences) with this exact structure:
+{
+  "name": "Full Name",
+  "current_title": "Most Recent Job Title",
+  "summary": "Brief professional summary",
+  "experience": [{"company":"Company Name","title":"Job Title","dates":"Date Range","bullets":["Achievement 1","Achievement 2"]}],
+  "skills": ["Skill 1","Skill 2"],
+  "education": [{"degree":"Degree Name","school":"School Name","year":"Year"}],
+  "achievements": ["Key achievement 1","Key achievement 2"]
+}
+If a field cannot be determined, use an empty string or empty array.`;
+
+        const result = await callOpenAI(apiKey, systemPrompt, resumeText);
+        let resumeData;
+        try {
+            // Strip markdown code fences if present
+            const cleaned = result.replace(/```json\s*/gi, '').replace(/```\s*/gi, '').trim();
+            resumeData = JSON.parse(cleaned);
+        } catch (e) {
+            return res.status(500).json({ error: 'Failed to parse AI response as JSON' });
+        }
+
+        res.json({ resume_data: resumeData, raw_text: resumeText });
+    } catch (err) {
+        console.error('[Builder] parse-resume error:', err.message);
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// POST /api/builder/research-role
+app.post('/api/builder/research-role', optionalAuth, express.json(), async (req, res) => {
+    try {
+        const { job_title, company, job_description } = req.body || {};
+        if (!job_title) return res.status(400).json({ error: 'job_title is required' });
+
+        const apiKey = await getOpenAIKey(req);
+        if (!apiKey) return res.status(500).json({ error: 'No AI API key found. Configure one in Project Tracker Admin → AI Settings, or set OPENAI_API_KEY env var.' });
+
+        const systemPrompt = `You are a career research expert. Analyze the target role and provide insights. Return ONLY valid JSON (no markdown fences) with this structure:
+{
+  "role_summary": "Overview of the role and its importance",
+  "key_responsibilities": ["Responsibility 1","Responsibility 2","Responsibility 3"],
+  "critical_skills": ["Skill 1","Skill 2","Skill 3"],
+  "company_context": "Brief context about the company if provided, otherwise 'Not specified'"
+}`;
+
+        const userPrompt = `Target Role: ${job_title}\nCompany: ${company || 'Not specified'}\nJob Description: ${job_description || 'Not provided'}`;
+
+        const result = await callOpenAI(apiKey, systemPrompt, userPrompt);
+        let roleResearch;
+        try {
+            const cleaned = result.replace(/```json\s*/gi, '').replace(/```\s*/gi, '').trim();
+            roleResearch = JSON.parse(cleaned);
+        } catch (e) {
+            return res.status(500).json({ error: 'Failed to parse AI response as JSON' });
+        }
+
+        res.json({ role_research: roleResearch });
+    } catch (err) {
+        console.error('[Builder] research-role error:', err.message);
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// POST /api/builder/generate
+app.post('/api/builder/generate', optionalAuth, express.json(), async (req, res) => {
+    try {
+        const { resume_data, role_context, plan_type, sections } = req.body || {};
+        if (!resume_data || !plan_type) return res.status(400).json({ error: 'resume_data and plan_type are required' });
+
+        const apiKey = await getOpenAIKey(req);
+        if (!apiKey) return res.status(500).json({ error: 'No AI API key found. Configure one in Project Tracker Admin → AI Settings, or set OPENAI_API_KEY env var.' });
+
+        const sectionList = (sections || ['plan']).join(', ');
+        const systemPrompt = `You are an expert career coach and plan writer. Generate a comprehensive ${plan_type} career transition plan. Return ONLY valid JSON (no markdown fences) with this structure:
+{
+  "hero": {
+    "name": "Candidate Name",
+    "target_title": "Target Role Title",
+    "plan_type": "${plan_type}",
+    "tagline": "A compelling one-line tagline"
+  },
+  "executive_summary": "A 2-3 paragraph executive summary of the plan",
+  "phases": [
+    {
+      "title": "Phase Title",
+      "timeline": "e.g. Weeks 1-4",
+      "goals": ["Goal 1","Goal 2"],
+      "actions": ["Action 1","Action 2","Action 3"],
+      "milestones": ["Milestone 1","Milestone 2"]
+    }
+  ],
+  "kpis": [
+    {"metric": "KPI Name", "target": "Target Value", "timeline": "When to achieve"}
+  ],
+  "skills_gap": [
+    {"skill": "Skill Name", "current_level": "Beginner/Intermediate/Advanced", "target_level": "Target", "action": "How to bridge gap"}
+  ],
+  "success_criteria": ["Criterion 1","Criterion 2","Criterion 3"],
+  "risks": [
+    {"risk": "Risk description", "mitigation": "How to mitigate"}
+  ]
+}
+
+Include sections: ${sectionList}. For any section not in the list, include a minimal placeholder.`;
+
+        const userPrompt = `Resume Data: ${JSON.stringify(resume_data)}\n\nTarget Role Context: ${JSON.stringify(role_context || {})}\n\nPlan Type: ${plan_type}\nSections to emphasize: ${sectionList}`;
+
+        const result = await callOpenAI(apiKey, systemPrompt, userPrompt);
+        let generated;
+        try {
+            const cleaned = result.replace(/```json\s*/gi, '').replace(/```\s*/gi, '').trim();
+            generated = JSON.parse(cleaned);
+        } catch (e) {
+            return res.status(500).json({ error: 'Failed to parse AI response as JSON' });
+        }
+
+        res.json({ generated });
+    } catch (err) {
+        console.error('[Builder] generate error:', err.message);
+        res.status(500).json({ error: err.message });
+    }
+});
 
 // ============================================================
 // START SERVER
