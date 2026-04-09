@@ -900,7 +900,7 @@ async function getOpenAIKey(req) {
 }
 
 // Helper: call OpenAI chat completions
-async function callOpenAI(apiKey, systemPrompt, userPrompt, model) {
+async function callOpenAI(apiKey, systemPrompt, userPrompt, model, maxTokens) {
     const res = await fetch('https://api.openai.com/v1/chat/completions', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + apiKey },
@@ -910,7 +910,7 @@ async function callOpenAI(apiKey, systemPrompt, userPrompt, model) {
                 { role: 'system', content: systemPrompt },
                 { role: 'user',   content: userPrompt }
             ],
-            max_tokens: 4000,
+            max_tokens: maxTokens || 4000,
             temperature: 0.7
         })
     });
@@ -956,10 +956,18 @@ app.post('/api/builder/parse-resume', optionalAuth, upload.single('file'), async
   "name": "Full Name",
   "current_title": "Most Recent Job Title",
   "summary": "Brief professional summary",
-  "experience": [{"company":"Company Name","title":"Job Title","dates":"Date Range","bullets":["Achievement 1","Achievement 2"]}],
+  "phone": "Phone number if found",
+  "email": "Email if found",
+  "linkedin": "LinkedIn URL if found",
+  "github": "GitHub URL if found",
+  "website": "Personal website/portfolio URL if found",
+  "twitter": "Twitter/X URL if found",
+  "experience": [{"company":"Company Name","title":"Job Title","dates":"Date Range","location":"City, State","bullets":["Achievement 1","Achievement 2"]}],
   "skills": ["Skill 1","Skill 2"],
   "education": [{"degree":"Degree Name","school":"School Name","year":"Year"}],
-  "achievements": ["Key achievement 1","Key achievement 2"]
+  "certifications": [{"name":"Cert Name","issuer":"Issuing Organization","year":"Year","url":""}],
+  "achievements": [{"title":"Achievement Title","description":"Description with quantified impact"}],
+  "leadership_engagement": [{"title":"Role Title","organization":"Organization","description":"Description"}]
 }
 If a field cannot be determined, use an empty string or empty array.`;
 
@@ -1018,48 +1026,81 @@ app.post('/api/builder/research-role', optionalAuth, express.json(), async (req,
 // POST /api/builder/generate
 app.post('/api/builder/generate', optionalAuth, express.json(), async (req, res) => {
     try {
-        const { resume_data, role_context, plan_type, sections } = req.body || {};
+        const { resume_data, role_context, plan_type, sections, job_description } = req.body || {};
         if (!resume_data || !plan_type) return res.status(400).json({ error: 'resume_data and plan_type are required' });
 
         const apiKey = await getOpenAIKey(req);
         if (!apiKey) return res.status(500).json({ error: 'No AI API key found. Configure one in Project Tracker Admin → AI Settings, or set OPENAI_API_KEY env var.' });
 
         const sectionList = (sections || ['plan']).join(', ');
-        const systemPrompt = `You are an expert career coach and plan writer. Generate a comprehensive ${plan_type} career transition plan. Return ONLY valid JSON (no markdown fences) with this structure:
+        const systemPrompt = `You are an expert career coach and executive resume strategist. Generate a comprehensive, deeply detailed ${plan_type} career plan and resume content.
+
+CRITICAL: Identify key skills, qualifications, terminology, and keywords from the job description provided. Weave these keywords naturally throughout the plan phases, executive summary, success criteria, and skills to demonstrate direct alignment between the candidate's experience and the target role requirements. This keyword alignment is essential for the content to be compelling.
+
+Return ONLY valid JSON (no markdown fences) with this EXACT structure:
 {
   "hero": {
-    "name": "Candidate Name",
+    "name": "Candidate Full Name",
     "target_title": "Target Role Title",
+    "subtitle": "Current title or tagline",
+    "company": "Target Company",
     "plan_type": "${plan_type}",
-    "tagline": "A compelling one-line tagline"
+    "tagline": "A compelling 2-sentence professional tagline describing the candidate's value proposition for this specific role"
   },
-  "executive_summary": "A 2-3 paragraph executive summary of the plan",
-  "phases": [
+  "executive_summary": "A detailed 3-4 paragraph executive summary. First paragraph: overview of the plan's purpose and strategic vision. Second paragraph: the candidate's unique qualifications and how they align with the role. Third paragraph: expected outcomes and measurable impact. Fourth paragraph (if applicable): forward-looking strategic direction. Make this substantive — at least 200 words.",
+  "plan_phases": [
     {
-      "title": "Phase Title",
-      "timeline": "e.g. Weeks 1-4",
-      "goals": ["Goal 1","Goal 2"],
-      "actions": ["Action 1","Action 2","Action 3"],
-      "milestones": ["Milestone 1","Milestone 2"]
+      "phase": "PHASE 1",
+      "label": "Phase Label (e.g. Assess & Diagnose)",
+      "title": "Descriptive Phase Title",
+      "timeframe": "Days 1-30",
+      "objective": "One clear sentence describing the phase objective",
+      "actions": ["Detailed action 1 — be specific and include context", "Action 2", "Action 3", "Action 4", "Action 5"],
+      "tools_and_technology": [{"name": "Tool/System Name", "description": "What it does and how it helps"}, {"name": "Tool 2", "description": "Description"}],
+      "milestones": ["Specific measurable milestone 1", "Milestone 2", "Milestone 3", "Milestone 4", "Milestone 5"],
+      "executive_value": "A full paragraph explaining the executive-level business value of completing this phase. Why does this matter to leadership? What risk does it mitigate? What value does it create?"
     }
   ],
+  "success_summary": ["Specific measurable outcome by end of plan", "Second outcome", "Third outcome", "Fourth outcome", "Fifth outcome", "Sixth outcome"],
   "kpis": [
-    {"metric": "KPI Name", "target": "Target Value", "timeline": "When to achieve"}
+    {"metric": "KPI Name", "target": "Target Value", "icon": "target"}
   ],
-  "skills_gap": [
-    {"skill": "Skill Name", "current_level": "Beginner/Intermediate/Advanced", "target_level": "Target", "action": "How to bridge gap"}
+  "success_criteria": ["Criterion 1 — specific and measurable", "Criterion 2", "Criterion 3"],
+  "experience": [
+    {"title": "Job Title", "company": "Company Name", "dates": "Date Range", "location": "City, State", "bullets": ["Achievement with quantified impact", "Another achievement"]}
   ],
-  "success_criteria": ["Criterion 1","Criterion 2","Criterion 3"],
-  "risks": [
-    {"risk": "Risk description", "mitigation": "How to mitigate"}
-  ]
+  "leadership_engagement": [
+    {"title": "Leadership Role Title", "organization": "Organization/Program Name", "description": "Brief description of the role and impact"}
+  ],
+  "skills": ["Skill 1", "Skill 2"],
+  "education": [{"degree": "Degree Name", "school": "School Name", "year": "Year"}],
+  "certifications": [{"name": "Cert Name", "issuer": "Issuer", "year": "Year", "url": ""}],
+  "achievements": [{"title": "Achievement Title", "description": "Detailed description with quantified impact", "icon": "award"}],
+  "leadership": [{"role": "Role Name", "description": "Description"}]
 }
 
-Include sections: ${sectionList}. For any section not in the list, include a minimal placeholder.`;
+IMPORTANT GUIDELINES:
+- For plan_phases: Generate 3 phases for 90-day plans, 4 for 12-month, 4 for 2-year plans
+- Each phase MUST have at least 5 detailed actions, 2+ tools, 5 milestones, and a substantial executive_value paragraph
+- The executive_summary must be at least 200 words and deeply reference the job requirements
+- Experience should be tailored from the resume data — rewrite bullets to emphasize alignment with the target role
+- Skills should include both the candidate's existing skills AND key skills from the job description
+- KPIs should have 6-8 specific metrics with realistic targets
+- Achievements should highlight quantified impact (revenue, percentages, team sizes)
+- Include sections: ${sectionList}. For any section not in the list, include a minimal placeholder array/object.`;
 
-        const userPrompt = `Resume Data: ${JSON.stringify(resume_data)}\n\nTarget Role Context: ${JSON.stringify(role_context || {})}\n\nPlan Type: ${plan_type}\nSections to emphasize: ${sectionList}`;
+        const userPrompt = `Resume Data: ${JSON.stringify(resume_data)}
 
-        const result = await callOpenAI(apiKey, systemPrompt, userPrompt);
+Target Role Context: ${JSON.stringify(role_context || {})}
+
+Job Description (use keywords from this): ${job_description || 'Not provided'}
+
+Plan Type: ${plan_type}
+Sections to emphasize: ${sectionList}
+
+Generate deeply detailed, rich content for each section. Match the depth and quality of a professional executive-level career plan website.`;
+
+        const result = await callOpenAI(apiKey, systemPrompt, userPrompt, 'gpt-4o', 8000);
         let generated;
         try {
             const cleaned = result.replace(/```json\s*/gi, '').replace(/```\s*/gi, '').trim();
