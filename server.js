@@ -1285,6 +1285,60 @@ Generate deeply detailed, rich content for each section. Match the depth and qua
 // LINKEDIN IMPORT ENDPOINTS
 // ============================================================
 
+// Helper: detect LinkedIn login/auth wall page
+function isLinkedInLoginPage(title, desc) {
+    const combined = ((title || '') + ' ' + (desc || '')).toLowerCase();
+    const loginIndicators = ['linkedin login', 'sign in', 'log in', 'join now'];
+    if (loginIndicators.some(ind => combined.includes(ind)) && !combined.includes('hiring')) return true;
+    if (combined.includes('keep in touch with people you know')) return true;
+    return false;
+}
+
+// Helper: extract job ID from LinkedIn URL
+function extractLinkedInJobId(url) {
+    const m1 = url.match(/\/jobs\/view\/(\d+)/);
+    if (m1) return m1[1];
+    const m2 = url.match(/currentJobId=(\d+)/);
+    if (m2) return m2[1];
+    const m3 = url.match(/\/jobs\/(\d+)/);
+    if (m3) return m3[1];
+    return '';
+}
+
+// Helper: HTML entity decode
+function htmlDecode(str) {
+    if (!str) return '';
+    return str.replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>')
+              .replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&amp;/g, '&');
+}
+
+// Helper: fetch URL with Googlebot UA (bypasses LinkedIn auth for many pages)
+async function fetchWithGooglebot(url) {
+    const response = await fetch(url, {
+        headers: {
+            'User-Agent': 'Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)',
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+            'Accept-Language': 'en-US,en;q=0.5',
+        },
+        redirect: 'follow',
+    });
+    return response.text();
+}
+
+// Helper: extract meta from HTML
+function extractMeta(html) {
+    const ogTitle = html.match(/<meta[^>]*property="og:title"[^>]*content="([^"]+)"/i);
+    const ogDesc = html.match(/<meta[^>]*property="og:description"[^>]*content="([^"]+)"/i);
+    const titleTag = html.match(/<title[^>]*>(.*?)<\/title>/is);
+    const descMeta = html.match(/<meta[^>]*name="description"[^>]*content="([^"]+)"/i);
+    const ldJson = html.match(/<script[^>]*type="application\/ld\+json"[^>]*>(.*?)<\/script>/is);
+    return {
+        title: (ogTitle ? ogTitle[1] : titleTag ? titleTag[1] : '').trim(),
+        desc: (ogDesc ? ogDesc[1] : descMeta ? descMeta[1] : '').trim(),
+        structured: ldJson ? ldJson[1].trim() : '',
+    };
+}
+
 // POST /api/builder/import-linkedin-profile
 app.post('/api/builder/import-linkedin-profile', optionalAuth, express.json(), async (req, res) => {
     try {
@@ -1293,61 +1347,85 @@ app.post('/api/builder/import-linkedin-profile', optionalAuth, express.json(), a
             return res.status(400).json({ error: 'Please provide a valid LinkedIn profile URL' });
         }
 
-        // Try to fetch public LinkedIn profile page
+        // Fetch with Googlebot UA
         let pageContent = '';
         try {
-            const response = await fetch(url, {
-                headers: {
-                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-                    'Accept': 'text/html,application/xhtml+xml',
-                    'Accept-Language': 'en-US,en;q=0.9'
-                }
-            });
-            pageContent = await response.text();
+            pageContent = await fetchWithGooglebot(url);
         } catch(e) {
             console.error('[LinkedIn import] Fetch error:', e.message);
         }
 
-        // Extract whatever we can from the page's meta tags and JSON-LD
-        let extractedName = '', extractedTitle = '', extractedSummary = '', extractedLocation = '';
-        // Try og:title which is usually "Name - Title - Company | LinkedIn"
-        const ogTitle = pageContent.match(/<meta[^>]*property="og:title"[^>]*content="([^"]+)"/i);
-        if (ogTitle) {
-            const parts = ogTitle[1].split(/\s*[-–—|]\s*/);
-            extractedName = parts[0]?.trim() || '';
-            extractedTitle = parts[1]?.trim() || '';
-        }
-        const ogDesc = pageContent.match(/<meta[^>]*property="og:description"[^>]*content="([^"]+)"/i);
-        if (ogDesc) extractedSummary = ogDesc[1].trim();
-        const geoRegion = pageContent.match(/<meta[^>]*name="geo.region"[^>]*content="([^"]+)"/i);
-        if (geoRegion) extractedLocation = geoRegion[1].trim();
+        const meta = extractMeta(pageContent);
 
-        // If we got meaningful data from scraping, use AI to parse it
-        if (extractedName || extractedSummary) {
-            const apiKey = await getOpenAIKey(req);
-            if (apiKey) {
-                const scrapedText = `Name: ${extractedName}\nTitle: ${extractedTitle}\nLocation: ${extractedLocation}\nSummary: ${extractedSummary}`;
-                const systemPrompt = `You are a resume parser. Given this LinkedIn profile data, extract and enhance it into structured resume JSON. Return ONLY valid JSON with this structure: {"name":"","current_title":"","summary":"","email":"","phone":"","linkedin":"","location":"","experience":[],"skills":[],"education":[],"certifications":[]}. Fill in what you can from the data. For empty fields, use empty strings/arrays.`;
-                const result = await callOpenAI(apiKey, systemPrompt, scrapedText, 'gpt-4o', 4000, true);
-                const parsed = extractJSON(result);
-                if (parsed) {
-                    parsed.linkedin = url;
-                    return res.json({ resume_data: parsed });
-                }
+        // Detect login page
+        if (isLinkedInLoginPage(meta.title, meta.desc) || (!meta.title && !meta.desc)) {
+            return res.status(422).json({
+                error: 'LinkedIn requires authentication to view profiles. Please try one of these alternatives:\n\n1. Download your LinkedIn profile as PDF (Profile > More > Save to PDF) and upload it in the file upload area\n2. Copy your profile text and paste it in the text area\n3. Manually enter your information in the contact fields'
+            });
+        }
+
+        // Try regex-based extraction: "FirstName LastName - Title - Company | LinkedIn"
+        const profilePattern = meta.title.match(/^(.+?)\s*[-–—]\s*(.+?)\s*[-–—]\s*(.+?)\s*[|]\s*LinkedIn/);
+        let parsedDirect = null;
+        if (profilePattern) {
+            parsedDirect = {
+                name: htmlDecode(profilePattern[1].trim()),
+                current_title: htmlDecode(profilePattern[2].trim()),
+                current_company: htmlDecode(profilePattern[3].trim()),
+                linkedin: url,
+                summary: htmlDecode(meta.desc),
+                experience: [{ title: htmlDecode(profilePattern[2].trim()), company: htmlDecode(profilePattern[3].trim()), location: '', dates: '', bullets: [] }],
+                education: [], skills: [], certifications: [],
+                email: '', phone: '', location: ''
+            };
+        } else if (meta.title.includes(' - ') && meta.title.includes('LinkedIn')) {
+            const parts = meta.title.replace(/\s*[|]\s*LinkedIn.*$/, '').split(/\s*[-–—]\s*/);
+            const name = htmlDecode((parts[0] || '').trim());
+            const title = htmlDecode((parts[1] || '').trim());
+            const company = htmlDecode((parts[2] || '').trim());
+            if (name) {
+                parsedDirect = {
+                    name, current_title: title, current_company: company,
+                    linkedin: url, summary: htmlDecode(meta.desc),
+                    experience: title ? [{ title, company, location: '', dates: '', bullets: [] }] : [],
+                    education: [], skills: [], certifications: [],
+                    email: '', phone: '', location: ''
+                };
             }
-            // Fallback: return raw extracted data
+        }
+
+        // If regex extraction worked, return without AI
+        if (parsedDirect && parsedDirect.name) {
+            return res.json({ resume_data: parsedDirect });
+        }
+
+        // Try AI parsing as fallback
+        const apiKey = await getOpenAIKey(req);
+        if (apiKey) {
+            const scrapedText = `LinkedIn URL: ${url}\nPage Title: ${meta.title}\nPage Description: ${meta.desc}${meta.structured ? '\nStructured Data: ' + meta.structured.slice(0, 2000) : ''}`;
+            const systemPrompt = `You are a resume parser. Given this LinkedIn profile data, extract and enhance it into structured resume JSON. Return ONLY valid JSON with this structure: {"name":"","current_title":"","summary":"","email":"","phone":"","linkedin":"","location":"","experience":[],"skills":[],"education":[],"certifications":[]}. Fill in what you can from the data. For empty fields, use empty strings/arrays.`;
+            const result = await callOpenAI(apiKey, systemPrompt, scrapedText, 'gpt-4o', 4000, true);
+            const parsed = extractJSON(result);
+            if (parsed) {
+                parsed.linkedin = url;
+                return res.json({ resume_data: parsed });
+            }
+        }
+
+        // Last fallback: return whatever meta we got
+        if (meta.title) {
             return res.json({
                 resume_data: {
-                    name: extractedName, current_title: extractedTitle, summary: extractedSummary,
-                    linkedin: url, location: extractedLocation,
-                    experience: [], skills: [], education: [], certifications: []
+                    name: htmlDecode(meta.title.split(/\s*[-–—|]\s*/)[0] || ''),
+                    current_title: '', summary: htmlDecode(meta.desc),
+                    linkedin: url, location: '', experience: [], skills: [],
+                    education: [], certifications: [], email: '', phone: ''
                 }
             });
         }
 
-        // If scraping failed, return helpful error
         return res.status(422).json({
-            error: 'LinkedIn blocked the request. For best results, download your profile as PDF from LinkedIn (Profile → More → Save to PDF) and upload it to the file uploader instead.'
+            error: 'LinkedIn blocked the request. Please download your profile as PDF (Profile → More → Save to PDF) and upload it instead.'
         });
     } catch(err) {
         console.error('[Builder] import-linkedin-profile error:', err.message);
@@ -1359,48 +1437,94 @@ app.post('/api/builder/import-linkedin-profile', optionalAuth, express.json(), a
 app.post('/api/builder/import-linkedin-job', optionalAuth, express.json(), async (req, res) => {
     try {
         const { url } = req.body || {};
-        if (!url || !url.includes('linkedin.com/job')) {
+        if (!url || (!url.includes('linkedin.com/job') && !url.includes('currentJobId'))) {
             return res.status(400).json({ error: 'Please provide a valid LinkedIn job URL' });
         }
 
-        // Try to fetch the job posting page
-        let pageContent = '';
-        try {
-            const response = await fetch(url, {
-                headers: {
-                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-                    'Accept': 'text/html,application/xhtml+xml',
-                    'Accept-Language': 'en-US,en;q=0.9'
-                }
+        // Extract job ID and try the public /jobs/view/ URL first
+        const jobId = extractLinkedInJobId(url);
+        let meta = { title: '', desc: '', structured: '' };
+
+        // Try public job view URL with Googlebot UA
+        if (jobId) {
+            try {
+                const html = await fetchWithGooglebot(`https://www.linkedin.com/jobs/view/${jobId}`);
+                meta = extractMeta(html);
+            } catch(e) {
+                console.warn('[LinkedIn job] Guest fetch failed:', e.message);
+            }
+        }
+
+        // Fallback: try original URL if guest fetch didn't get data
+        if (!meta.title && !meta.desc) {
+            try {
+                const html = await fetchWithGooglebot(url);
+                meta = extractMeta(html);
+            } catch(e) {
+                console.warn('[LinkedIn job] URL fetch failed:', e.message);
+            }
+        }
+
+        // Detect login page
+        if (isLinkedInLoginPage(meta.title, meta.desc)) {
+            return res.status(422).json({
+                error: 'LinkedIn requires authentication to view this job posting. Please try:\n\n1. Open the job in LinkedIn, copy the job title, company, and description\n2. Paste them directly into the fields below\n3. Or try using the direct job link format: linkedin.com/jobs/view/[jobId]'
             });
-            pageContent = await response.text();
-        } catch(e) {
-            console.error('[LinkedIn job import] Fetch error:', e.message);
         }
 
-        // Extract from meta tags
-        let jobTitle = '', company = '', description = '';
-        const ogTitle = pageContent.match(/<meta[^>]*property="og:title"[^>]*content="([^"]+)"/i);
-        if (ogTitle) {
-            // Format is usually "Job Title - Company | LinkedIn"
-            const parts = ogTitle[1].split(/\s*[-–—|]\s*/);
-            jobTitle = parts[0]?.trim() || '';
-            company = parts[1]?.trim() || '';
+        // Try structured data (ld+json) first
+        if (meta.structured) {
+            try {
+                const sd = JSON.parse(meta.structured);
+                if (sd && sd.title) {
+                    return res.json({
+                        job_title: htmlDecode(sd.title || ''),
+                        company: htmlDecode((sd.hiringOrganization && sd.hiringOrganization.name) || ''),
+                        location: (sd.jobLocation && sd.jobLocation[0] && sd.jobLocation[0].address)
+                            ? htmlDecode(sd.jobLocation[0].address.addressLocality || '') : '',
+                        description: htmlDecode((sd.description || '').slice(0, 5000))
+                    });
+                }
+            } catch(e) { /* ignore JSON parse errors */ }
         }
-        const ogDesc = pageContent.match(/<meta[^>]*property="og:description"[^>]*content="([^"]+)"/i);
-        if (ogDesc) description = ogDesc[1].trim();
 
-        // If we got some data, try to enhance with AI
-        if (jobTitle || description) {
+        // Regex-based parsing from LinkedIn title: "[Company] hiring [Title] in [Location] | LinkedIn"
+        const hiringMatch = meta.title.match(/^(.+?)\s+hiring\s+(.+?)\s+in\s+(.+?)\s*[|]\s*LinkedIn/);
+        if (hiringMatch) {
+            return res.json({
+                job_title: htmlDecode(hiringMatch[2].trim()),
+                company: htmlDecode(hiringMatch[1].trim()),
+                location: htmlDecode(hiringMatch[3].trim()),
+                description: htmlDecode(meta.desc)
+            });
+        }
+        // Looser match: "[Company] hiring [Title] | LinkedIn"
+        if (meta.title.includes(' hiring ')) {
+            const parts = meta.title.split(' hiring ');
+            const company = htmlDecode(parts[0].trim());
+            let rest = parts[1] || '';
+            rest = rest.replace(/\s*[|]\s*LinkedIn.*$/, '');
+            const locMatch = rest.match(/\s+in\s+(.+)$/);
+            const location = locMatch ? htmlDecode(locMatch[1].trim()) : '';
+            const jobTitle = locMatch ? htmlDecode(rest.slice(0, locMatch.index).trim()) : htmlDecode(rest.trim());
+            if (jobTitle) {
+                return res.json({ job_title: jobTitle, company, location, description: htmlDecode(meta.desc) });
+            }
+        }
+
+        // Fallback: try AI parsing
+        if (meta.title || meta.desc) {
             const apiKey = await getOpenAIKey(req);
-            if (apiKey && description) {
-                const systemPrompt = `Given this LinkedIn job posting data, extract the job title, company name, and a clean formatted job description. Return ONLY valid JSON: {"job_title":"","company":"","description":"clean job description text"}`;
-                const userText = `Title: ${jobTitle}\nCompany: ${company}\nRaw Description: ${description}`;
+            if (apiKey) {
+                const systemPrompt = `Given this LinkedIn job posting data, extract the job title, company name, location, and job description. Return ONLY valid JSON: {"job_title":"","company":"","location":"","description":""}. If data looks like a login page, return {"error":"login_page"}.`;
+                const userText = `Title: ${meta.title}\nDescription: ${meta.desc}`;
                 const result = await callOpenAI(apiKey, systemPrompt, userText, 'gpt-4o', 4000, true);
                 const parsed = extractJSON(result);
-                if (parsed) return res.json(parsed);
+                if (parsed && !parsed.error) return res.json(parsed);
             }
-            return res.json({ job_title: jobTitle, company: company, description: description });
+            // Last fallback: return raw meta
+            const parts = meta.title.split(/\s*[-–—|]\s*/);
+            return res.json({ job_title: htmlDecode(parts[0] || ''), company: htmlDecode(parts[1] || ''), location: '', description: htmlDecode(meta.desc) });
         }
 
         return res.status(422).json({
