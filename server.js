@@ -1101,6 +1101,8 @@ app.post('/api/builder/generate', optionalAuth, express.json(), async (req, res)
         const sectionList = (sections || ['plan']).join(', ');
         const systemPrompt = `You are an expert career coach and executive resume strategist. Generate a comprehensive, deeply detailed ${plan_type} career plan and resume content.
 
+CRITICAL: The executive_summary, plan_phases, and ALL plan content must be written in FIRST PERSON voice from the candidate's perspective. Use "I", "my", "I will", "I bring" — NEVER refer to the candidate in the third person (do NOT write "The purpose of this plan is to align [Name] with..." or "[Name] brings..."). This is the candidate's own plan, presented in their own voice.
+
 CRITICAL: Identify key skills, qualifications, terminology, and keywords from the job description provided. Weave these keywords naturally throughout the plan phases, executive summary, success criteria, and skills to demonstrate direct alignment between the candidate's experience and the target role requirements. This keyword alignment is essential for the content to be compelling.
 
 Return ONLY valid JSON (no markdown fences) with this EXACT structure:
@@ -1113,7 +1115,7 @@ Return ONLY valid JSON (no markdown fences) with this EXACT structure:
     "plan_type": "${plan_type}",
     "tagline": "A compelling 2-sentence professional tagline describing the candidate's value proposition for this specific role"
   },
-  "executive_summary": "A detailed 3-4 paragraph executive summary. First paragraph: overview of the plan's purpose and strategic vision. Second paragraph: the candidate's unique qualifications and how they align with the role. Third paragraph: expected outcomes and measurable impact. Fourth paragraph (if applicable): forward-looking strategic direction. Make this substantive — at least 200 words.",
+  "executive_summary": "A detailed 3-4 paragraph executive summary written in FIRST PERSON. First paragraph: my strategic vision for the role and what I aim to accomplish. Second paragraph: my unique qualifications and how they align with the role. Third paragraph: the expected outcomes and measurable impact I will deliver. Fourth paragraph (if applicable): my forward-looking strategic direction. Make this substantive — at least 200 words.",
   "plan_phases": [
     {
       "phase": "PHASE 1",
