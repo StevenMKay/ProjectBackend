@@ -1045,10 +1045,10 @@ app.post('/api/builder/parse-resume', optionalAuth, upload.single('file'), async
         const apiKey = await getOpenAIKey(req);
         if (!apiKey) return res.status(500).json({ error: 'No AI API key found. Configure one in Project Tracker Admin → AI Settings, or set OPENAI_API_KEY env var.' });
 
-        const systemPrompt = `You are a resume parsing expert. Extract structured data from the resume text provided. Return ONLY valid JSON (no markdown fences) with this exact structure:
+        const systemPrompt = `You are a resume parsing expert that handles ANY text format — structured resumes, messy copy-paste, unformatted text dumps, bullet points, paragraph form, LinkedIn profile scrapes, or even text fragments. Extract whatever structured data you can find. Return ONLY valid JSON (no markdown fences) with this exact structure:
 {
-  "name": "Full Name",
-  "current_title": "Most Recent Job Title",
+  "name": "Full Name (or 'Unknown' if not found)",
+  "current_title": "Most Recent Job Title (or best guess from context)",
   "summary": "Brief professional summary or summary statement from the resume",
   "phone": "Phone number if found",
   "email": "Email if found",
@@ -1067,6 +1067,15 @@ app.post('/api/builder/parse-resume', optionalAuth, upload.single('file'), async
   "projects": [{"title":"Project Name","description":"Brief description","url":"URL if found","technologies":["Tech1","Tech2"]}],
   "languages": ["English (Native)","Spanish (Conversational)"]
 }
+
+CRITICAL: Be extremely flexible with input format. The text may be:
+- A well-formatted resume with clear sections
+- Raw text copied from LinkedIn or a website
+- Unformatted fragments with no clear section headings
+- A mix of bullet points and paragraphs with inconsistent formatting
+- Jumbled text from a multi-column PDF where sidebar content is interleaved
+- Simple text with just a name, job title, and a few sentences
+NEVER fail — always return the best extraction possible from whatever input is given. If data is ambiguous, make your best guess. If a section has no data, use an empty string or empty array.
 
 CRITICAL INSTRUCTIONS FOR EXPERIENCE EXTRACTION:
 - The resume text may come from a multi-column PDF where text from sidebars (skills, education, contact info) is interleaved with the main content. Carefully separate sidebar content from experience content.
@@ -1269,6 +1278,137 @@ Generate deeply detailed, rich content for each section. Match the depth and qua
     } catch (err) {
         console.error('[Builder] generate error:', err.message);
         res.status(500).json({ error: err.message });
+    }
+});
+
+// ============================================================
+// LINKEDIN IMPORT ENDPOINTS
+// ============================================================
+
+// POST /api/builder/import-linkedin-profile
+app.post('/api/builder/import-linkedin-profile', optionalAuth, express.json(), async (req, res) => {
+    try {
+        const { url } = req.body || {};
+        if (!url || !url.includes('linkedin.com/in/')) {
+            return res.status(400).json({ error: 'Please provide a valid LinkedIn profile URL' });
+        }
+
+        // Try to fetch public LinkedIn profile page
+        let pageContent = '';
+        try {
+            const response = await fetch(url, {
+                headers: {
+                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                    'Accept': 'text/html,application/xhtml+xml',
+                    'Accept-Language': 'en-US,en;q=0.9'
+                }
+            });
+            pageContent = await response.text();
+        } catch(e) {
+            console.error('[LinkedIn import] Fetch error:', e.message);
+        }
+
+        // Extract whatever we can from the page's meta tags and JSON-LD
+        let extractedName = '', extractedTitle = '', extractedSummary = '', extractedLocation = '';
+        // Try og:title which is usually "Name - Title - Company | LinkedIn"
+        const ogTitle = pageContent.match(/<meta[^>]*property="og:title"[^>]*content="([^"]+)"/i);
+        if (ogTitle) {
+            const parts = ogTitle[1].split(/\s*[-–—|]\s*/);
+            extractedName = parts[0]?.trim() || '';
+            extractedTitle = parts[1]?.trim() || '';
+        }
+        const ogDesc = pageContent.match(/<meta[^>]*property="og:description"[^>]*content="([^"]+)"/i);
+        if (ogDesc) extractedSummary = ogDesc[1].trim();
+        const geoRegion = pageContent.match(/<meta[^>]*name="geo.region"[^>]*content="([^"]+)"/i);
+        if (geoRegion) extractedLocation = geoRegion[1].trim();
+
+        // If we got meaningful data from scraping, use AI to parse it
+        if (extractedName || extractedSummary) {
+            const apiKey = await getOpenAIKey(req);
+            if (apiKey) {
+                const scrapedText = `Name: ${extractedName}\nTitle: ${extractedTitle}\nLocation: ${extractedLocation}\nSummary: ${extractedSummary}`;
+                const systemPrompt = `You are a resume parser. Given this LinkedIn profile data, extract and enhance it into structured resume JSON. Return ONLY valid JSON with this structure: {"name":"","current_title":"","summary":"","email":"","phone":"","linkedin":"","location":"","experience":[],"skills":[],"education":[],"certifications":[]}. Fill in what you can from the data. For empty fields, use empty strings/arrays.`;
+                const result = await callOpenAI(apiKey, systemPrompt, scrapedText, 'gpt-4o', 4000, true);
+                const parsed = extractJSON(result);
+                if (parsed) {
+                    parsed.linkedin = url;
+                    return res.json({ resume_data: parsed });
+                }
+            }
+            // Fallback: return raw extracted data
+            return res.json({
+                resume_data: {
+                    name: extractedName, current_title: extractedTitle, summary: extractedSummary,
+                    linkedin: url, location: extractedLocation,
+                    experience: [], skills: [], education: [], certifications: []
+                }
+            });
+        }
+
+        // If scraping failed, return helpful error
+        return res.status(422).json({
+            error: 'LinkedIn blocked the request. For best results, download your profile as PDF from LinkedIn (Profile → More → Save to PDF) and upload it to the file uploader instead.'
+        });
+    } catch(err) {
+        console.error('[Builder] import-linkedin-profile error:', err.message);
+        res.status(500).json({ error: 'Failed to import LinkedIn profile: ' + err.message });
+    }
+});
+
+// POST /api/builder/import-linkedin-job
+app.post('/api/builder/import-linkedin-job', optionalAuth, express.json(), async (req, res) => {
+    try {
+        const { url } = req.body || {};
+        if (!url || !url.includes('linkedin.com/job')) {
+            return res.status(400).json({ error: 'Please provide a valid LinkedIn job URL' });
+        }
+
+        // Try to fetch the job posting page
+        let pageContent = '';
+        try {
+            const response = await fetch(url, {
+                headers: {
+                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                    'Accept': 'text/html,application/xhtml+xml',
+                    'Accept-Language': 'en-US,en;q=0.9'
+                }
+            });
+            pageContent = await response.text();
+        } catch(e) {
+            console.error('[LinkedIn job import] Fetch error:', e.message);
+        }
+
+        // Extract from meta tags
+        let jobTitle = '', company = '', description = '';
+        const ogTitle = pageContent.match(/<meta[^>]*property="og:title"[^>]*content="([^"]+)"/i);
+        if (ogTitle) {
+            // Format is usually "Job Title - Company | LinkedIn"
+            const parts = ogTitle[1].split(/\s*[-–—|]\s*/);
+            jobTitle = parts[0]?.trim() || '';
+            company = parts[1]?.trim() || '';
+        }
+        const ogDesc = pageContent.match(/<meta[^>]*property="og:description"[^>]*content="([^"]+)"/i);
+        if (ogDesc) description = ogDesc[1].trim();
+
+        // If we got some data, try to enhance with AI
+        if (jobTitle || description) {
+            const apiKey = await getOpenAIKey(req);
+            if (apiKey && description) {
+                const systemPrompt = `Given this LinkedIn job posting data, extract the job title, company name, and a clean formatted job description. Return ONLY valid JSON: {"job_title":"","company":"","description":"clean job description text"}`;
+                const userText = `Title: ${jobTitle}\nCompany: ${company}\nRaw Description: ${description}`;
+                const result = await callOpenAI(apiKey, systemPrompt, userText, 'gpt-4o', 4000, true);
+                const parsed = extractJSON(result);
+                if (parsed) return res.json(parsed);
+            }
+            return res.json({ job_title: jobTitle, company: company, description: description });
+        }
+
+        return res.status(422).json({
+            error: 'Could not extract job details. LinkedIn may have blocked the request. Please copy and paste the job details manually.'
+        });
+    } catch(err) {
+        console.error('[Builder] import-linkedin-job error:', err.message);
+        res.status(500).json({ error: 'Failed to import LinkedIn job: ' + err.message });
     }
 });
 
