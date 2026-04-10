@@ -1156,14 +1156,15 @@ Return ONLY valid JSON (no markdown fences) with this EXACT structure:
 }
 
 IMPORTANT GUIDELINES:
-- For plan_phases: Generate 3 phases for 90-day plans, 4 for 12-month, 4 for 2-year plans
+- For plan_phases: You MUST generate EXACTLY 3 phases for 90-day plans, 4 for 12-month, 4 for 2-year plans. Do NOT stop after Phase 1. Every phase must be fully detailed with all fields populated.
 - Each phase MUST have at least 5 detailed actions, 2+ tools, 5 milestones, and a substantial executive_value paragraph
 - The executive_summary must be at least 200 words and deeply reference the job requirements
-- Experience should be tailored from the resume data — rewrite bullets to emphasize alignment with the target role
+- Experience: Preserve ALL jobs from the resume data. Do NOT drop, merge, or skip any positions. Include ALL original bullets for each job — reword them to emphasize alignment with the target role, but never reduce the bullet count.
 - Skills should include both the candidate's existing skills AND key skills from the job description
 - KPIs should have 6-8 specific metrics with realistic targets
-- Achievements should highlight quantified impact (revenue, percentages, team sizes)
-- Include sections: ${sectionList}. For any section not in the list, include a minimal placeholder array/object.`;
+- Achievements: Extract achievements from the resume data (quantified results, promotions, awards) AND generate additional relevant achievements. Each must have quantified impact (revenue, percentages, team sizes, cost savings).
+- Include sections: ${sectionList}. For any section not in the list, include a minimal placeholder array/object.
+- CRITICAL: Your response must contain the COMPLETE JSON object with ALL sections fully populated. Do not truncate or cut short any section. Every array must contain all its items.`;
 
         const userPrompt = `Resume Data: ${JSON.stringify(resume_data)}
 
@@ -1176,7 +1177,7 @@ Sections to emphasize: ${sectionList}
 
 Generate deeply detailed, rich content for each section. Match the depth and quality of a professional executive-level career plan website.`;
 
-        const result = await callOpenAI(apiKey, systemPrompt, userPrompt, 'gpt-4o', 8000, true);
+        const result = await callOpenAI(apiKey, systemPrompt, userPrompt, 'gpt-4o', 16000, true);
         const generated = extractJSON(result);
         if (!generated) {
             console.error('[Builder] generate: unparseable AI response:', result.slice(0, 500));
