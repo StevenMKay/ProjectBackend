@@ -958,6 +958,7 @@ app.post('/api/builder/parse-resume', optionalAuth, upload.single('file'), async
   "summary": "Brief professional summary",
   "phone": "Phone number if found",
   "email": "Email if found",
+  "address": "Full mailing address or City, State if found",
   "linkedin": "LinkedIn URL if found",
   "github": "GitHub URL if found",
   "website": "Personal website/portfolio URL if found",
@@ -967,9 +968,12 @@ app.post('/api/builder/parse-resume', optionalAuth, upload.single('file'), async
   "education": [{"degree":"Degree Name","school":"School Name","year":"Year"}],
   "certifications": [{"name":"Cert Name","issuer":"Issuing Organization","year":"Year","url":""}],
   "achievements": [{"title":"Achievement Title","description":"Description with quantified impact"}],
-  "leadership_engagement": [{"title":"Role Title","organization":"Organization","description":"Description"}]
+  "leadership_engagement": [{"title":"Role Title","organization":"Organization","description":"Description"}],
+  "volunteer_experience": [{"organization":"Organization Name","role":"Role/Title","dates":"Date Range","description":"Description of contributions"}],
+  "projects": [{"title":"Project Name","description":"Brief description","url":"URL if found","technologies":["Tech1","Tech2"]}],
+  "languages": ["English (Native)","Spanish (Conversational)"]
 }
-If a field cannot be determined, use an empty string or empty array.`;
+If a field cannot be determined, use an empty string or empty array. Extract every detail available — do not skip sections.`;
 
         const result = await callOpenAI(apiKey, systemPrompt, resumeText);
         let resumeData;
@@ -984,6 +988,58 @@ If a field cannot be determined, use an empty string or empty array.`;
         res.json({ resume_data: resumeData, raw_text: resumeText });
     } catch (err) {
         console.error('[Builder] parse-resume error:', err.message);
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// POST /api/builder/enhance-resume
+// AI-enhances resume content (experience bullets, summary, skills) for a target role
+app.post('/api/builder/enhance-resume', optionalAuth, express.json(), async (req, res) => {
+    try {
+        const { experience, skills, summary, job_description, job_title } = req.body || {};
+        if (!experience && !skills && !summary) {
+            return res.status(400).json({ error: 'No resume content provided to enhance' });
+        }
+
+        const apiKey = await getOpenAIKey(req);
+        if (!apiKey) return res.status(500).json({ error: 'No AI API key found.' });
+
+        const systemPrompt = `You are a professional resume writer and ATS optimization expert. Enhance the provided resume content to better target the specified role. 
+
+Guidelines:
+- Reword experience bullets to incorporate relevant keywords from the job description
+- Make bullets achievement-oriented with quantified results where possible (use realistic metrics if not provided)
+- Enhance the professional summary to align with the target role
+- Reorder and augment skills to prioritize those matching the job description
+- Maintain truthfulness — enhance wording, don't fabricate experience
+- Keep bullets concise (1-2 lines each)
+- Use strong action verbs to start each bullet
+
+Return ONLY valid JSON (no markdown fences) with this structure:
+{
+  "experience": [{"company":"Same Company","title":"Same Title","dates":"Same Dates","location":"Same Location","bullets":["Enhanced bullet 1","Enhanced bullet 2"]}],
+  "skills": ["Prioritized Skill 1","Skill 2"],
+  "summary": "Enhanced professional summary targeting the role"
+}`;
+
+        const userPrompt = `Target Role: ${job_title || 'Not specified'}
+Job Description: ${job_description || 'Not provided'}
+
+Resume Content to Enhance:
+${JSON.stringify({ experience, skills, summary }, null, 2)}`;
+
+        const result = await callOpenAI(apiKey, systemPrompt, userPrompt, 'gpt-4o', 4000);
+        let enhancedData;
+        try {
+            const cleaned = result.replace(/```json\s*/gi, '').replace(/```\s*/gi, '').trim();
+            enhancedData = JSON.parse(cleaned);
+        } catch (e) {
+            return res.status(500).json({ error: 'Failed to parse AI enhancement response' });
+        }
+
+        res.json({ enhanced_data: enhancedData });
+    } catch (err) {
+        console.error('[Builder] enhance-resume error:', err.message);
         res.status(500).json({ error: err.message });
     }
 });
