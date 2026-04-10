@@ -900,19 +900,21 @@ async function getOpenAIKey(req) {
 }
 
 // Helper: call OpenAI chat completions
-async function callOpenAI(apiKey, systemPrompt, userPrompt, model, maxTokens) {
+async function callOpenAI(apiKey, systemPrompt, userPrompt, model, maxTokens, jsonMode) {
+    const body = {
+        model: model || 'gpt-4o',
+        messages: [
+            { role: 'system', content: systemPrompt },
+            { role: 'user',   content: userPrompt }
+        ],
+        max_tokens: maxTokens || 4000,
+        temperature: 0.7
+    };
+    if (jsonMode) body.response_format = { type: 'json_object' };
     const res = await fetch('https://api.openai.com/v1/chat/completions', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + apiKey },
-        body: JSON.stringify({
-            model: model || 'gpt-4o',
-            messages: [
-                { role: 'system', content: systemPrompt },
-                { role: 'user',   content: userPrompt }
-            ],
-            max_tokens: maxTokens || 4000,
-            temperature: 0.7
-        })
+        body: JSON.stringify(body)
     });
     if (!res.ok) {
         const err = await res.json().catch(() => ({}));
@@ -921,6 +923,21 @@ async function callOpenAI(apiKey, systemPrompt, userPrompt, model, maxTokens) {
     const data = await res.json();
     if (!data.choices || !data.choices[0]) throw new Error('No response from OpenAI');
     return data.choices[0].message.content;
+}
+
+// Robustly extract JSON from an AI response string
+function extractJSON(text) {
+    // 1. Strip markdown code fences
+    let cleaned = text.replace(/```json\s*/gi, '').replace(/```\s*/gi, '').trim();
+    // 2. Try direct parse first
+    try { return JSON.parse(cleaned); } catch (_) {}
+    // 3. Find the outermost { ... } in the string
+    const start = cleaned.indexOf('{');
+    const end = cleaned.lastIndexOf('}');
+    if (start !== -1 && end > start) {
+        try { return JSON.parse(cleaned.slice(start, end + 1)); } catch (_) {}
+    }
+    return null;
 }
 
 // Helper: extract text from uploaded file buffer
@@ -975,13 +992,10 @@ app.post('/api/builder/parse-resume', optionalAuth, upload.single('file'), async
 }
 If a field cannot be determined, use an empty string or empty array. Extract every detail available — do not skip sections.`;
 
-        const result = await callOpenAI(apiKey, systemPrompt, resumeText);
-        let resumeData;
-        try {
-            // Strip markdown code fences if present
-            const cleaned = result.replace(/```json\s*/gi, '').replace(/```\s*/gi, '').trim();
-            resumeData = JSON.parse(cleaned);
-        } catch (e) {
+        const result = await callOpenAI(apiKey, systemPrompt, resumeText, 'gpt-4o', 4000, true);
+        const resumeData = extractJSON(result);
+        if (!resumeData) {
+            console.error('[Builder] parse-resume: unparseable AI response:', result.slice(0, 500));
             return res.status(500).json({ error: 'Failed to parse AI response as JSON' });
         }
 
@@ -1028,12 +1042,10 @@ Job Description: ${job_description || 'Not provided'}
 Resume Content to Enhance:
 ${JSON.stringify({ experience, skills, summary }, null, 2)}`;
 
-        const result = await callOpenAI(apiKey, systemPrompt, userPrompt, 'gpt-4o', 4000);
-        let enhancedData;
-        try {
-            const cleaned = result.replace(/```json\s*/gi, '').replace(/```\s*/gi, '').trim();
-            enhancedData = JSON.parse(cleaned);
-        } catch (e) {
+        const result = await callOpenAI(apiKey, systemPrompt, userPrompt, 'gpt-4o', 4000, true);
+        const enhancedData = extractJSON(result);
+        if (!enhancedData) {
+            console.error('[Builder] enhance-resume: unparseable AI response:', result.slice(0, 500));
             return res.status(500).json({ error: 'Failed to parse AI enhancement response' });
         }
 
@@ -1063,12 +1075,10 @@ app.post('/api/builder/research-role', optionalAuth, express.json(), async (req,
 
         const userPrompt = `Target Role: ${job_title}\nCompany: ${company || 'Not specified'}\nJob Description: ${job_description || 'Not provided'}`;
 
-        const result = await callOpenAI(apiKey, systemPrompt, userPrompt);
-        let roleResearch;
-        try {
-            const cleaned = result.replace(/```json\s*/gi, '').replace(/```\s*/gi, '').trim();
-            roleResearch = JSON.parse(cleaned);
-        } catch (e) {
+        const result = await callOpenAI(apiKey, systemPrompt, userPrompt, 'gpt-4o', 4000, true);
+        const roleResearch = extractJSON(result);
+        if (!roleResearch) {
+            console.error('[Builder] research-role: unparseable AI response:', result.slice(0, 500));
             return res.status(500).json({ error: 'Failed to parse AI response as JSON' });
         }
 
@@ -1156,12 +1166,10 @@ Sections to emphasize: ${sectionList}
 
 Generate deeply detailed, rich content for each section. Match the depth and quality of a professional executive-level career plan website.`;
 
-        const result = await callOpenAI(apiKey, systemPrompt, userPrompt, 'gpt-4o', 8000);
-        let generated;
-        try {
-            const cleaned = result.replace(/```json\s*/gi, '').replace(/```\s*/gi, '').trim();
-            generated = JSON.parse(cleaned);
-        } catch (e) {
+        const result = await callOpenAI(apiKey, systemPrompt, userPrompt, 'gpt-4o', 8000, true);
+        const generated = extractJSON(result);
+        if (!generated) {
+            console.error('[Builder] generate: unparseable AI response:', result.slice(0, 500));
             return res.status(500).json({ error: 'Failed to parse AI response as JSON' });
         }
 
