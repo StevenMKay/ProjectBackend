@@ -972,7 +972,7 @@ app.post('/api/builder/parse-resume', optionalAuth, upload.single('file'), async
 {
   "name": "Full Name",
   "current_title": "Most Recent Job Title",
-  "summary": "Brief professional summary",
+  "summary": "Brief professional summary or summary statement from the resume",
   "phone": "Phone number if found",
   "email": "Email if found",
   "address": "Full mailing address or City, State if found",
@@ -980,7 +980,7 @@ app.post('/api/builder/parse-resume', optionalAuth, upload.single('file'), async
   "github": "GitHub URL if found",
   "website": "Personal website/portfolio URL if found",
   "twitter": "Twitter/X URL if found",
-  "experience": [{"company":"Company Name","title":"Job Title","dates":"Date Range","location":"City, State","bullets":["Achievement 1","Achievement 2"]}],
+  "experience": [{"company":"Company Name","title":"Job Title","dates":"Date Range","location":"City, State","role_summary":"The paragraph description of the role before the bullet points","bullets":["Achievement 1","Achievement 2"]}],
   "skills": ["Skill 1","Skill 2"],
   "education": [{"degree":"Degree Name","school":"School Name","year":"Year"}],
   "certifications": [{"name":"Cert Name","issuer":"Issuing Organization","year":"Year","url":""}],
@@ -990,9 +990,17 @@ app.post('/api/builder/parse-resume', optionalAuth, upload.single('file'), async
   "projects": [{"title":"Project Name","description":"Brief description","url":"URL if found","technologies":["Tech1","Tech2"]}],
   "languages": ["English (Native)","Spanish (Conversational)"]
 }
+
+CRITICAL INSTRUCTIONS FOR EXPERIENCE EXTRACTION:
+- The resume text may come from a multi-column PDF where text from sidebars (skills, education, contact info) is interleaved with the main content. Carefully separate sidebar content from experience content.
+- Extract EVERY job/position listed. Do NOT skip or truncate any entries.
+- For EACH job, extract ALL bullet points — even if there are 5, 8, or 10+ bullets per role.
+- If a job has a paragraph description before the bullet points, include it in "role_summary".
+- If a job title contains the company name (e.g. "Vice President, Faculty III | Chase Bank"), separate the title from the company name.
+- Preserve the original wording of bullet points. Do not summarize or combine them.
 If a field cannot be determined, use an empty string or empty array. Extract every detail available — do not skip sections.`;
 
-        const result = await callOpenAI(apiKey, systemPrompt, resumeText, 'gpt-4o', 4000, true);
+        const result = await callOpenAI(apiKey, systemPrompt, resumeText, 'gpt-4o', 16000, true);
         const resumeData = extractJSON(result);
         if (!resumeData) {
             console.error('[Builder] parse-resume: unparseable AI response:', result.slice(0, 500));
