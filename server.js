@@ -784,10 +784,8 @@ app.post('/api/billing/webhook',
             const session = event.data.object;
             const { companyName, tenantId, adminEmail, plan, maxSeats } = session.metadata || {};
 
-            if (!tenantId || !adminEmail) {
-                console.error('[Billing] Missing metadata on session', session.id);
-                return res.status(400).send('Missing metadata');
-            }
+            // Only process tenant provisioning if this is a NotebookPM checkout (has tenantId)
+            if (tenantId && adminEmail) {
 
             try {
                 // 1. Create tenant record in Firestore
@@ -838,6 +836,7 @@ app.post('/api/billing/webhook',
                 console.error('[Billing] Provisioning error for', tenantId, err.message);
                 // Return 200 so Stripe doesn't retry — log for manual resolution
             }
+            } // end if (tenantId && adminEmail)
         }
 
         if (event.type === 'customer.subscription.deleted') {
@@ -849,11 +848,89 @@ app.post('/api/billing/webhook',
                 await snap.docs[0].ref.update({ active: false });
                 console.log('[Billing] Deactivated tenant for subscription', sub.id);
             }
+            // Also deactivate any resume builder subscriptions
+            const builderSnap = await db.collection('builderSubscriptions')
+                .where('stripeSubscriptionId', '==', sub.id).limit(1).get();
+            if (!builderSnap.empty) {
+                await builderSnap.docs[0].ref.update({ active: false });
+                console.log('[Billing] Deactivated builder subscription for', sub.id);
+            }
+        }
+
+        // Resume Builder subscription activation
+        if (event.type === 'checkout.session.completed') {
+            const session2 = event.data.object;
+            if (session2.metadata && session2.metadata.product === 'resume-builder') {
+                const email = (session2.metadata.email || session2.customer_email || '').toLowerCase();
+                if (email) {
+                    try {
+                        await db.collection('builderSubscriptions').doc(email).set({
+                            active: true,
+                            stripeCustomerId: session2.customer,
+                            stripeSubscriptionId: session2.subscription,
+                            email,
+                            createdAt: new Date().toISOString()
+                        });
+                        console.log('[Billing] Resume Builder subscription activated for', email);
+                    } catch (err) {
+                        console.error('[Billing] Builder sub activation error for', email, err.message);
+                    }
+                }
+            }
         }
 
         res.json({ received: true });
     }
 );
+
+// ============================================================
+// RESUME BUILDER BILLING ROUTES
+// ============================================================
+
+// Create Stripe Checkout Session for Resume Builder
+app.post('/api/builder/checkout', async (req, res) => {
+    try {
+        if (!stripe) return res.status(503).json({ error: 'Billing not configured' });
+        const { email } = req.body;
+        if (!email || !email.includes('@')) return res.status(400).json({ error: 'Valid email is required' });
+
+        const priceId = process.env.STRIPE_PRICE_BUILDER || 'price_1TKfmxLdhN0HRKYRdcAu2rwN';
+
+        const session = await stripe.checkout.sessions.create({
+            mode: 'subscription',
+            payment_method_types: ['card'],
+            customer_email: email,
+            line_items: [{ price: priceId, quantity: 1 }],
+            metadata: {
+                product: 'resume-builder',
+                email: email.toLowerCase()
+            },
+            success_url: `${process.env.SITE_URL || 'https://www.careersolutionsfortoday.com'}/resumebuilder.html?upgraded=1`,
+            cancel_url:  `${process.env.SITE_URL || 'https://www.careersolutionsfortoday.com'}/resumebuilder.html?cancelled=1`,
+        });
+        res.json({ url: session.url });
+    } catch (err) {
+        console.error('[Builder] Checkout error:', err.message);
+        res.status(500).json({ error: err.message || 'Failed to create checkout session' });
+    }
+});
+
+// Check Resume Builder subscription status
+app.get('/api/builder/check-subscription', async (req, res) => {
+    try {
+        const email = (req.query.email || '').toLowerCase().trim();
+        if (!email) return res.json({ subscribed: false });
+        if (!db) return res.json({ subscribed: false });
+        const doc = await db.collection('builderSubscriptions').doc(email).get();
+        if (doc.exists && doc.data().active) {
+            return res.json({ subscribed: true });
+        }
+        res.json({ subscribed: false });
+    } catch (err) {
+        console.error('[Builder] Check subscription error:', err.message);
+        res.json({ subscribed: false });
+    }
+});
 
 // ============================================================
 // RESUME BUILDER API ROUTES
@@ -998,6 +1075,10 @@ CRITICAL INSTRUCTIONS FOR EXPERIENCE EXTRACTION:
 - If a job has a paragraph description before the bullet points, include it in "role_summary".
 - If a job title contains the company name (e.g. "Vice President, Faculty III | Chase Bank"), separate the title from the company name.
 - Preserve the original wording of bullet points. Do not summarize or combine them.
+- Pay special attention to associate-level, analyst, or junior positions — they are equally important as senior roles. Do NOT skip them.
+- If bullet points or accomplishments appear separated from a job title by sidebar text (skills, contact info), associate them with the correct role based on context.
+- Each experience entry MUST include the title, company, and ALL bullets found for that role. Never return an empty bullets array if the resume text contains achievements for that role.
+VERIFICATION: After building the experience array, count the total number of distinct job titles/positions you extracted. Scan the resume text again for any position you missed. If the resume mentions more roles than you have in the array, go back and extract them.
 If a field cannot be determined, use an empty string or empty array. Extract every detail available — do not skip sections.`;
 
         const result = await callOpenAI(apiKey, systemPrompt, resumeText, 'gpt-4o', 16000, true);
