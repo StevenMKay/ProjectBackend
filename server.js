@@ -1028,13 +1028,13 @@ async function extractTextFromFile(file) {
     return file.buffer.toString('utf-8');
 }
 
-// Helper: call OpenAI chat completions with file content (PDF as base64 or images)
-async function callOpenAIWithFile(apiKey, systemPrompt, textContent, pdfBase64, model, maxTokens, jsonMode) {
+// Helper: call OpenAI chat completions with vision (text + PNG images)
+async function callOpenAIWithImages(apiKey, systemPrompt, textContent, base64PngImages, model, maxTokens, jsonMode) {
     const userContent = [{ type: 'text', text: textContent }];
-    if (pdfBase64) {
+    for (const img of base64PngImages) {
         userContent.push({
             type: 'image_url',
-            image_url: { url: `data:application/pdf;base64,${pdfBase64}`, detail: 'high' }
+            image_url: { url: `data:image/png;base64,${img}`, detail: 'high' }
         });
     }
     const body = {
@@ -1123,22 +1123,21 @@ CRITICAL INSTRUCTIONS FOR EXPERIENCE EXTRACTION:
 VERIFICATION: After building the experience array, count the total number of distinct job titles/positions you extracted. Scan the resume text again for any position you missed. If the resume mentions more roles than you have in the array, go back and extract them.
 If a field cannot be determined, use an empty string or empty array. Extract every detail available — do not skip sections.`;
 
-        // If PDF uploaded, send the raw PDF as base64 so GPT-4o can see the actual layout
-        const isPdf = req.file && (req.file.originalname || '').split('.').pop().toLowerCase() === 'pdf';
-        let pdfBase64 = null;
-        if (isPdf) {
+        // Check if client sent rendered PDF page images for vision-based parsing
+        let pageImages = [];
+        if (req.body && req.body.page_images_json) {
             try {
-                pdfBase64 = req.file.buffer.toString('base64');
-                console.log(`[Builder] Sending PDF as base64 for vision-based layout parsing (${Math.round(pdfBase64.length / 1024)}KB)`);
-            } catch (b64Err) {
-                console.warn('[Builder] PDF base64 conversion failed, falling back to text-only:', b64Err.message);
+                pageImages = JSON.parse(req.body.page_images_json);
+                console.log(`[Builder] Received ${pageImages.length} page image(s) from client for vision parsing`);
+            } catch (e) {
+                console.warn('[Builder] Failed to parse page_images_json, falling back to text-only');
             }
         }
 
         let result;
-        if (pdfBase64) {
-            const visionUserText = `I have attached the actual resume PDF so you can see the true layout (columns, sections, sidebar vs main content). Use the PDF as the PRIMARY source for understanding which bullets belong to which job role, and which sections are sidebar vs main content. Here is also the raw extracted text as a supplement:\n\n${resumeText}`;
-            result = await callOpenAIWithFile(apiKey, systemPrompt, visionUserText, pdfBase64, 'gpt-4o', 16000, true);
+        if (pageImages.length > 0) {
+            const visionUserText = `I have attached the actual resume pages as images so you can see the true layout (columns, sections, sidebar vs main content). Use the IMAGES as the PRIMARY source for understanding which bullets belong to which job role, and which sections are sidebar vs main content. Here is also the raw extracted text as a supplement:\n\n${resumeText}`;
+            result = await callOpenAIWithImages(apiKey, systemPrompt, visionUserText, pageImages, 'gpt-4o', 16000, true);
         } else {
             result = await callOpenAI(apiKey, systemPrompt, resumeText, 'gpt-4o', 16000, true);
         }
