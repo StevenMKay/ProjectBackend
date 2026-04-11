@@ -1379,6 +1379,47 @@ Generate deeply detailed, rich content for each section. Match the depth and qua
     }
 });
 
+// POST /api/builder/career-path
+app.post('/api/builder/career-path', optionalAuth, express.json(), async (req, res) => {
+    try {
+        const { current_role, target_role, target_company, skills, experience, education } = req.body || {};
+        if (!target_role) return res.status(400).json({ error: 'target_role is required' });
+
+        const apiKey = await getOpenAIKey(req);
+        if (!apiKey) return res.status(500).json({ error: 'No AI API key found.' });
+
+        const systemPrompt = `You are an expert career advisor. Generate a detailed career path roadmap. Return ONLY valid JSON (no markdown fences) with this structure:
+{
+  "current_assessment": "Assessment of current position and strengths",
+  "target_analysis": "What the target role requires and why it's a good fit",
+  "gap_analysis": ["Skill or experience gap 1", "Gap 2", "Gap 3"],
+  "milestones": [
+    { "title": "Milestone title", "timeframe": "0-3 months", "actions": ["Specific action 1", "Action 2"], "skills_to_develop": ["Skill 1"] }
+  ],
+  "recommended_certifications": ["Certification 1", "Certification 2"],
+  "networking_strategy": "Detailed networking advice for this career transition",
+  "timeline_estimate": "Estimated time to reach the target role"
+}
+Generate 4-6 milestones with realistic timeframes. Be specific and actionable.`;
+
+        const userPrompt = `Current Role: ${current_role || 'Not specified'}
+Target Role: ${target_role}
+Target Company: ${target_company || 'Not specified'}
+Current Skills: ${JSON.stringify(skills || [])}
+Experience: ${JSON.stringify(experience || [])}
+Education: ${JSON.stringify(education || [])}`;
+
+        const result = await callOpenAI(apiKey, systemPrompt, userPrompt, 'gpt-4o', 4000, true);
+        const careerPath = extractJSON(result);
+        if (!careerPath) return res.status(500).json({ error: 'Failed to parse career path response' });
+
+        res.json(careerPath);
+    } catch (err) {
+        console.error('[Builder] career-path error:', err.message);
+        res.status(500).json({ error: err.message });
+    }
+});
+
 // ============================================================
 // LINKEDIN IMPORT ENDPOINTS
 // ============================================================
