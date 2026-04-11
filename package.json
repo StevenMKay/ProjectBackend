@@ -19,6 +19,7 @@
     "node-fetch": "^3.3.2",
     "nodemailer": "^6.9.0",
     "pdf-parse": "^1.1.1",
+    "pdf-to-img": "^4.1.0",
     "stripe": "^14.0.0"
   },
   "devDependencies": {
