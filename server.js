@@ -977,7 +977,7 @@ async function getOpenAIKey(req) {
 }
 
 // Helper: call OpenAI chat completions
-async function callOpenAI(apiKey, systemPrompt, userPrompt, model, maxTokens, jsonMode) {
+async function callOpenAI(apiKey, systemPrompt, userPrompt, model, maxTokens, jsonMode, temperature) {
     const body = {
         model: model || 'gpt-4o',
         messages: [
@@ -985,7 +985,7 @@ async function callOpenAI(apiKey, systemPrompt, userPrompt, model, maxTokens, js
             { role: 'user',   content: userPrompt }
         ],
         max_tokens: maxTokens || 4000,
-        temperature: 0.7
+        temperature: temperature !== undefined ? temperature : 0.7
     };
     if (jsonMode) body.response_format = { type: 'json_object' };
     const res = await fetch('https://api.openai.com/v1/chat/completions', {
@@ -1029,7 +1029,7 @@ async function extractTextFromFile(file) {
 }
 
 // Helper: call OpenAI chat completions with vision (text + PNG images)
-async function callOpenAIWithImages(apiKey, systemPrompt, textContent, base64PngImages, model, maxTokens, jsonMode) {
+async function callOpenAIWithImages(apiKey, systemPrompt, textContent, base64PngImages, model, maxTokens, jsonMode, temperature) {
     const userContent = [{ type: 'text', text: textContent }];
     for (const img of base64PngImages) {
         userContent.push({
@@ -1044,7 +1044,7 @@ async function callOpenAIWithImages(apiKey, systemPrompt, textContent, base64Png
             { role: 'user', content: userContent }
         ],
         max_tokens: maxTokens || 4000,
-        temperature: 0.7
+        temperature: temperature !== undefined ? temperature : 0.7
     };
     if (jsonMode) body.response_format = { type: 'json_object' };
     const res = await fetch('https://api.openai.com/v1/chat/completions', {
@@ -1121,6 +1121,13 @@ CRITICAL INSTRUCTIONS FOR EXPERIENCE EXTRACTION:
 - If bullet points or accomplishments appear separated from a job title by sidebar text (skills, contact info), associate them with the correct role based on context.
 - Each experience entry MUST include the title, company, and ALL bullets found for that role. Never return an empty bullets array if the resume text contains achievements for that role.
 VERIFICATION: After building the experience array, count the total number of distinct job titles/positions you extracted. Scan the resume text again for any position you missed. If the resume mentions more roles than you have in the array, go back and extract them.
+
+BULLET ASSIGNMENT STRATEGY:
+1. First pass: identify every distinct job header (title + company + date range) in the resume.
+2. Build a skeleton: map each job header to its position in the document.
+3. Second pass: for each bullet point or accomplishment, assign it to the job header that IMMEDIATELY PRECEDES it in the document flow. If sidebar text (skills, contact info, education) is interleaved between a job header and its bullets, skip over the sidebar text and still assign the bullets to the preceding job header.
+4. NEVER assign a bullet to a role that comes later in the document or that has a date range inconsistent with the bullet's context.
+5. If unsure, use the date range and job context to determine the correct assignment.
 If a field cannot be determined, use an empty string or empty array. Extract every detail available — do not skip sections.`;
 
         // Check if client sent rendered PDF page images for vision-based parsing
@@ -1137,9 +1144,9 @@ If a field cannot be determined, use an empty string or empty array. Extract eve
         let result;
         if (pageImages.length > 0) {
             const visionUserText = `I have attached the actual resume pages as images so you can see the true layout (columns, sections, sidebar vs main content). Use the IMAGES as the PRIMARY source for understanding which bullets belong to which job role, and which sections are sidebar vs main content. Here is also the raw extracted text as a supplement:\n\n${resumeText}`;
-            result = await callOpenAIWithImages(apiKey, systemPrompt, visionUserText, pageImages, 'gpt-4o', 16000, true);
+            result = await callOpenAIWithImages(apiKey, systemPrompt, visionUserText, pageImages, 'gpt-4o', 16000, true, 0.2);
         } else {
-            result = await callOpenAI(apiKey, systemPrompt, resumeText, 'gpt-4o', 16000, true);
+            result = await callOpenAI(apiKey, systemPrompt, resumeText, 'gpt-4o', 16000, true, 0.2);
         }
         const resumeData = extractJSON(result);
         if (!resumeData) {
@@ -1237,17 +1244,57 @@ app.post('/api/builder/research-role', optionalAuth, express.json(), async (req,
     }
 });
 
+// GET /api/builder/plan-count — returns how many plans a user has
+app.get('/api/builder/plan-count', optionalAuth, async (req, res) => {
+    try {
+        if (!req.uid) return res.json({ count: 0 });
+        if (!db) return res.json({ count: 0 });
+        const snap = await db.collection('plans').where('userId', '==', req.uid).count().get();
+        res.json({ count: snap.data().count || 0 });
+    } catch (err) {
+        console.error('[Builder] plan-count error:', err.message);
+        res.json({ count: 0 });
+    }
+});
+
+const MAX_PLANS_SUBSCRIBER = 5;
+
 // POST /api/builder/generate
 app.post('/api/builder/generate', optionalAuth, express.json(), async (req, res) => {
     try {
-        const { resume_data, role_context, plan_type, sections, job_description } = req.body || {};
+        const { resume_data, role_context, plan_type, sections, job_description, plan_context } = req.body || {};
+
+        // Server-side plan limit: subscribers can have up to 5 plans (owners exempt)
+        if (db && req.uid && !OWNER_UIDS_ADMIN.includes(req.uid)) {
+            if (!req.body.editing_plan_id) {
+                const snap = await db.collection('plans').where('userId', '==', req.uid).count().get();
+                const planCount = snap.data().count || 0;
+                if (planCount >= MAX_PLANS_SUBSCRIBER) {
+                    return res.status(403).json({ error: `You've reached the maximum of ${MAX_PLANS_SUBSCRIBER} plans. Please delete an existing plan to create a new one.` });
+                }
+            }
+        }
         if (!resume_data || !plan_type) return res.status(400).json({ error: 'resume_data and plan_type are required' });
 
         const apiKey = await getOpenAIKey(req);
         if (!apiKey) return res.status(500).json({ error: 'No AI API key found. Configure one in Project Tracker Admin → AI Settings, or set OPENAI_API_KEY env var.' });
 
         const sectionList = (sections || ['plan']).join(', ');
-        const systemPrompt = `You are an expert career coach and executive resume strategist. Generate a comprehensive, deeply detailed ${plan_type} career plan and resume content.
+
+        // Build timeframe guidance based on plan type
+        let timeframeGuidance;
+        if (plan_type === '12-month') {
+            timeframeGuidance = 'Use MONTH-based timeframes for each phase, e.g. "Months 1-3", "Months 4-6", "Months 7-9", "Months 10-12". Do NOT use day-based timeframes like "Days 1-90".';
+        } else if (plan_type === '2-year') {
+            timeframeGuidance = 'Use MONTH-based timeframes for each phase, e.g. "Months 1-6", "Months 7-12", "Months 13-18", "Months 19-24". Do NOT use day-based timeframes.';
+        } else {
+            timeframeGuidance = 'Use day-based timeframes for each phase, e.g. "Days 1-30", "Days 31-60", "Days 61-90".';
+        }
+
+        // Include plan context if provided
+        const planContextNote = plan_context ? `\n\nADDITIONAL PLAN CONTEXT FROM THE USER (incorporate this into the plan strategy and phases):\n${plan_context}` : '';
+
+        const systemPrompt = `You are an expert career coach and executive resume strategist. Generate a comprehensive, deeply detailed ${plan_type} career plan and resume content.${planContextNote}
 
 CRITICAL: The executive_summary, plan_phases, and ALL plan content must be written in FIRST PERSON voice from the candidate's perspective. Use "I", "my", "I will", "I bring" — NEVER refer to the candidate in the third person (do NOT write "The purpose of this plan is to align [Name] with..." or "[Name] brings..."). This is the candidate's own plan, presented in their own voice.
 
@@ -1297,6 +1344,7 @@ Return ONLY valid JSON (no markdown fences) with this EXACT structure:
 
 IMPORTANT GUIDELINES:
 - For plan_phases: You MUST generate EXACTLY 3 phases for 90-day plans, 4 for 12-month, 4 for 2-year plans. Do NOT stop after Phase 1. Every phase must be fully detailed with all fields populated.
+- TIMEFRAME FORMAT: ${timeframeGuidance}
 - Each phase MUST have at least 5 detailed actions, 2+ tools, 5 milestones, and a substantial executive_value paragraph
 - The executive_summary must be at least 200 words and deeply reference the job requirements
 - Experience: Preserve ALL jobs from the resume data. Do NOT drop, merge, or skip any positions. Include ALL original bullets for each job — reword them to emphasize alignment with the target role, but never reduce the bullet count.
@@ -1362,17 +1410,31 @@ function htmlDecode(str) {
               .replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&amp;/g, '&');
 }
 
-// Helper: fetch URL with Googlebot UA (bypasses LinkedIn auth for many pages)
+// Helper: fetch URL with multiple User-Agent strategies (tries different UAs)
+const FETCH_USER_AGENTS = [
+    'Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)',
+    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+    'Mozilla/5.0 (compatible; bingbot/2.0; +http://www.bing.com/bingbot.htm)',
+];
 async function fetchWithGooglebot(url) {
-    const response = await fetch(url, {
-        headers: {
-            'User-Agent': 'Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)',
-            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-            'Accept-Language': 'en-US,en;q=0.5',
-        },
-        redirect: 'follow',
-    });
-    return response.text();
+    let lastError;
+    for (const ua of FETCH_USER_AGENTS) {
+        try {
+            const response = await fetch(url, {
+                headers: {
+                    'User-Agent': ua,
+                    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+                    'Accept-Language': 'en-US,en;q=0.5',
+                },
+                redirect: 'follow',
+            });
+            const html = await response.text();
+            // If we got meaningful content (not a blank/tiny page), return it
+            if (html.length > 500) return html;
+        } catch (e) { lastError = e; }
+    }
+    if (lastError) throw lastError;
+    return '';
 }
 
 // Helper: extract meta from HTML
