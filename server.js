@@ -1416,7 +1416,7 @@ Return ONLY valid JSON (no markdown fences) with this EXACT structure:
     "subtitle": "Current title or tagline",
     "company": "Target Company",
     "plan_type": "${plan_type}",
-    "tagline": "A compelling 2-sentence professional tagline describing the candidate's value proposition for this specific role"
+    "tagline": "A detailed 3-5 sentence professional tagline (at least 60 words). Describe the candidate's core expertise, years of relevant experience, specific domain strengths, quantified career highlights (e.g. managed $X portfolios, led X-person teams, delivered X% improvements), and their unique value proposition for this specific role. Reference key qualifications from the job description. This should read like a polished executive brief — substantive and specific, not generic."
   },
   "executive_summary": "A detailed 3-4 paragraph executive summary written in FIRST PERSON. First paragraph: my strategic vision for the role and what I aim to accomplish. Second paragraph: my unique qualifications and how they align with the role. Third paragraph: the expected outcomes and measurable impact I will deliver. Fourth paragraph (if applicable): my forward-looking strategic direction. Make this substantive — at least 200 words.",
   "plan_phases": [
