@@ -1078,6 +1078,17 @@ async function getOpenAIKey(req) {
             if (settingsDoc.exists && settingsDoc.data().aiApiKey) return settingsDoc.data().aiApiKey;
         }
     }
+    // 4. For builder users without a tenant: scan all tenants for any available key
+    if (db) {
+        try {
+            const snap = await db.collection('tenants').limit(5).get();
+            for (const tdoc of snap.docs) {
+                const settingsDoc = await db.collection('tenants').doc(tdoc.id)
+                    .collection('settings').doc('extended').get();
+                if (settingsDoc.exists && settingsDoc.data().aiApiKey) return settingsDoc.data().aiApiKey;
+            }
+        } catch (e) { console.warn('[getOpenAIKey] Tenant scan error:', e.message); }
+    }
     return null;
 }
 
@@ -1181,7 +1192,7 @@ app.post('/api/builder/parse-resume', requireBuilderAuth, checkBuilderQuota, upl
         }
 
         const apiKey = await getOpenAIKey(req);
-        if (!apiKey) return res.status(500).json({ error: 'No AI API key found. Configure one in Project Tracker Admin → AI Settings, or set OPENAI_API_KEY env var.' });
+        if (!apiKey) return res.status(500).json({ error: 'AI service temporarily unavailable. Please try again later.' });
 
         const systemPrompt = `You are a resume parsing expert that handles ANY text format — structured resumes, messy copy-paste, unformatted text dumps, bullet points, paragraph form, LinkedIn profile scrapes, or even text fragments. Extract whatever structured data you can find. Return ONLY valid JSON (no markdown fences) with this exact structure:
 {
@@ -1277,7 +1288,7 @@ app.post('/api/builder/enhance-resume', requireBuilderAuth, checkBuilderQuota, e
         }
 
         const apiKey = await getOpenAIKey(req);
-        if (!apiKey) return res.status(500).json({ error: 'No AI API key found.' });
+        if (!apiKey) return res.status(500).json({ error: 'AI service temporarily unavailable. Please try again later.' });
 
         const systemPrompt = `You are a professional resume writer and ATS optimization expert. Enhance the provided resume content to better target the specified role. 
 
@@ -1325,7 +1336,7 @@ app.post('/api/builder/research-role', requireBuilderAuth, checkBuilderQuota, ex
         if (!job_title) return res.status(400).json({ error: 'job_title is required' });
 
         const apiKey = await getOpenAIKey(req);
-        if (!apiKey) return res.status(500).json({ error: 'No AI API key found. Configure one in Project Tracker Admin → AI Settings, or set OPENAI_API_KEY env var.' });
+        if (!apiKey) return res.status(500).json({ error: 'AI service temporarily unavailable. Please try again later.' });
 
         const systemPrompt = `You are a career research expert. Analyze the target role and provide insights. Return ONLY valid JSON (no markdown fences) with this structure:
 {
@@ -1385,7 +1396,7 @@ app.post('/api/builder/generate', requireBuilderAuth, checkBuilderQuota, express
         if (!resume_data || !plan_type) return res.status(400).json({ error: 'resume_data and plan_type are required' });
 
         const apiKey = await getOpenAIKey(req);
-        if (!apiKey) return res.status(500).json({ error: 'No AI API key found. Configure one in Project Tracker Admin → AI Settings, or set OPENAI_API_KEY env var.' });
+        if (!apiKey) return res.status(500).json({ error: 'AI service temporarily unavailable. Please try again later.' });
 
         const sectionList = (sections || ['plan']).join(', ');
 
@@ -1495,7 +1506,7 @@ app.post('/api/builder/career-path', requireBuilderAuth, checkBuilderQuota, expr
         if (!target_role) return res.status(400).json({ error: 'target_role is required' });
 
         const apiKey = await getOpenAIKey(req);
-        if (!apiKey) return res.status(500).json({ error: 'No AI API key found.' });
+        if (!apiKey) return res.status(500).json({ error: 'AI service temporarily unavailable. Please try again later.' });
 
         const systemPrompt = `You are an expert career advisor. Generate a detailed career path roadmap. Return ONLY valid JSON (no markdown fences) with this structure:
 {
