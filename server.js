@@ -925,6 +925,9 @@ app.get('/api/builder/check-subscription', async (req, res) => {
         if (doc.exists && doc.data().active) {
             return res.json({ subscribed: true });
         }
+        if (doc.exists) {
+            return res.json({ subscribed: false, hadSubscription: true });
+        }
         res.json({ subscribed: false });
     } catch (err) {
         console.error('[Builder] Check subscription error:', err.message);
