@@ -1485,9 +1485,27 @@ function extractMeta(html) {
     const titleTag = html.match(/<title[^>]*>(.*?)<\/title>/is);
     const descMeta = html.match(/<meta[^>]*name="description"[^>]*content="([^"]+)"/i);
     const ldJson = html.match(/<script[^>]*type="application\/ld\+json"[^>]*>(.*?)<\/script>/is);
+
+    // Try to extract full job description from HTML body (LinkedIn public pages)
+    let bodyDesc = '';
+    const bodyPatterns = [
+        /<div[^>]*class="[^"]*show-more-less-html__markup[^"]*"[^>]*>([\s\S]*?)<\/div>/i,
+        /<div[^>]*class="[^"]*description__text[^"]*"[^>]*>([\s\S]*?)<\/div>/i,
+        /<section[^>]*class="[^"]*show-more-less-html[^"]*"[^>]*>([\s\S]*?)<\/section>/i,
+        /<div[^>]*class="[^"]*jobs-description-content__text[^"]*"[^>]*>([\s\S]*?)<\/div>/i,
+    ];
+    for (const pat of bodyPatterns) {
+        const m = html.match(pat);
+        if (m && m[1]) {
+            bodyDesc = m[1].replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
+            if (bodyDesc.length > 100) break;
+        }
+    }
+
     return {
         title: (ogTitle ? ogTitle[1] : titleTag ? titleTag[1] : '').trim(),
         desc: (ogDesc ? ogDesc[1] : descMeta ? descMeta[1] : '').trim(),
+        bodyDesc: bodyDesc.slice(0, 5000),
         structured: ldJson ? ldJson[1].trim() : '',
     };
 }
@@ -1648,7 +1666,7 @@ app.post('/api/builder/import-linkedin-job', optionalAuth, express.json(), async
                 job_title: htmlDecode(hiringMatch[2].trim()),
                 company: htmlDecode(hiringMatch[1].trim()),
                 location: htmlDecode(hiringMatch[3].trim()),
-                description: htmlDecode(meta.desc)
+                description: htmlDecode(meta.bodyDesc || meta.desc)
             });
         }
         // Looser match: "[Company] hiring [Title] | LinkedIn"
@@ -1661,7 +1679,7 @@ app.post('/api/builder/import-linkedin-job', optionalAuth, express.json(), async
             const location = locMatch ? htmlDecode(locMatch[1].trim()) : '';
             const jobTitle = locMatch ? htmlDecode(rest.slice(0, locMatch.index).trim()) : htmlDecode(rest.trim());
             if (jobTitle) {
-                return res.json({ job_title: jobTitle, company, location, description: htmlDecode(meta.desc) });
+                return res.json({ job_title: jobTitle, company, location, description: htmlDecode(meta.bodyDesc || meta.desc) });
             }
         }
 
@@ -1670,7 +1688,7 @@ app.post('/api/builder/import-linkedin-job', optionalAuth, express.json(), async
             const apiKey = await getOpenAIKey(req);
             if (apiKey) {
                 const systemPrompt = `Given this LinkedIn job posting data, extract the job title, company name, location, and job description. Return ONLY valid JSON: {"job_title":"","company":"","location":"","description":""}. If data looks like a login page, return {"error":"login_page"}.`;
-                const userText = `Title: ${meta.title}\nDescription: ${meta.desc}`;
+                const userText = `Title: ${meta.title}\nDescription: ${meta.bodyDesc || meta.desc}`;
                 const result = await callOpenAI(apiKey, systemPrompt, userText, 'gpt-4o', 4000, true);
                 const parsed = extractJSON(result);
                 if (parsed && !parsed.error) return res.json(parsed);
