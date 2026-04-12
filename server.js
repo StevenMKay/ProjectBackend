@@ -3,7 +3,7 @@ const express = require('express');
 const cors    = require('cors');
 const crypto  = require('crypto');
 const admin   = require('firebase-admin');
-const { getFirestore } = require('firebase-admin/firestore');
+const { getFirestore, FieldValue } = require('firebase-admin/firestore');
 const Stripe  = require('stripe');
 const multer  = require('multer');
 const pdfParse = require('pdf-parse');
@@ -954,6 +954,111 @@ async function optionalAuth(req, res, next) {
     next();
 }
 
+// ============================================================
+// SERVER-SIDE USAGE ENFORCEMENT FOR RESUME BUILDER
+// ============================================================
+
+// Require a valid Firebase token — blocks unauthenticated requests
+async function requireBuilderAuth(req, res, next) {
+    const token = (req.headers.authorization || '').replace('Bearer ', '').trim();
+    if (!token) return res.status(401).json({ error: 'Authentication required' });
+    if (!adminInitialised) return res.status(503).json({ error: 'Auth service unavailable' });
+    try {
+        const decoded = await auth.verifyIdToken(token);
+        req.uid = decoded.uid;
+        req.userEmail = (decoded.email || '').toLowerCase();
+        const doc = await db.collection('users').doc(decoded.uid).get();
+        if (doc.exists) {
+            req.userDoc = doc.data();
+        } else if (OWNER_UIDS_ADMIN.includes(decoded.uid)) {
+            req.userDoc = { tenantId: 'admin', role: 'admin', email: decoded.email || '' };
+        }
+    } catch (e) {
+        return res.status(401).json({ error: 'Invalid or expired token' });
+    }
+    next();
+}
+
+// Check builder usage quotas server-side before allowing AI calls
+// Sets req.builderAccess with tier info for downstream use
+async function checkBuilderQuota(req, res, next) {
+    // Owners always pass
+    if (OWNER_UIDS_ADMIN.includes(req.uid)) {
+        req.builderAccess = { tier: 'owner' };
+        return next();
+    }
+    try {
+        // Check subscription status
+        const subDoc = req.userEmail
+            ? await db.collection('builderSubscriptions').doc(req.userEmail).get()
+            : null;
+        const isSubscriber = subDoc && subDoc.exists && subDoc.data().active === true;
+
+        if (isSubscriber) {
+            req.builderAccess = { tier: 'subscriber' };
+            return next();
+        }
+
+        // Read usage doc
+        const usageDoc = await db.collection('builderUsage').doc(req.uid).get();
+        const usage = usageDoc.exists ? usageDoc.data() : {};
+
+        const freeUsesCount = usage.count || 0;
+        const singlePurchased = usage.singlePurchase || false;
+        const singlePurchaseDate = usage.singlePurchaseDate
+            ? (usage.singlePurchaseDate.toDate ? usage.singlePurchaseDate.toDate() : new Date(usage.singlePurchaseDate))
+            : null;
+        const aiUsesRemaining = usage.aiUsesRemaining ?? 0;
+
+        // Single purchase active check (within 30 days)
+        const singlePurchaseActive = singlePurchased && singlePurchaseDate
+            && (Date.now() - singlePurchaseDate.getTime()) < 30 * 24 * 60 * 60 * 1000;
+
+        // Free trial: freeUsesCount < 1 means they haven't used their free plan yet
+        if (freeUsesCount < 1) {
+            req.builderAccess = { tier: 'free_trial', aiUsesRemaining: 3 };
+            return next();
+        }
+
+        // $1 single purchase with remaining AI uses
+        if (singlePurchaseActive && aiUsesRemaining > 0) {
+            req.builderAccess = { tier: 'single_purchase', aiUsesRemaining };
+            return next();
+        }
+
+        // No valid access
+        return res.status(403).json({
+            error: 'Usage limit reached',
+            code: 'QUOTA_EXCEEDED',
+            message: singlePurchaseActive
+                ? 'You have used all your AI uses for this purchase. Upgrade to a subscription for unlimited access.'
+                : 'Your free trial has been used. Purchase a plan to continue.'
+        });
+    } catch (err) {
+        console.error('[Builder] Quota check error:', err.message);
+        // On error, allow the request through to avoid blocking legitimate users
+        req.builderAccess = { tier: 'unknown' };
+        next();
+    }
+}
+
+// Deduct one AI use server-side (called after successful AI response)
+async function deductAIUseServer(req) {
+    if (!req.uid || !req.builderAccess) return;
+    const { tier } = req.builderAccess;
+    // Owners and subscribers don't get deducted
+    if (tier === 'owner' || tier === 'subscriber') return;
+    try {
+        // Use Firestore increment to safely decrement (atomic operation)
+        await db.collection('builderUsage').doc(req.uid).set({
+            aiUsesRemaining: FieldValue.increment(-1),
+            updatedAt: FieldValue.serverTimestamp()
+        }, { merge: true });
+    } catch (e) {
+        console.error('[Builder] Server-side AI deduct error:', e.message);
+    }
+}
+
 // Helper: get OpenAI key from env or Firestore tenant settings (same key the Project Tracker uses)
 async function getOpenAIKey(req) {
     // 1. Prefer env var if set
@@ -1063,7 +1168,7 @@ async function callOpenAIWithImages(apiKey, systemPrompt, textContent, base64Png
 
 // POST /api/builder/parse-resume
 // Accepts multipart: file OR text field
-app.post('/api/builder/parse-resume', optionalAuth, upload.single('file'), async (req, res) => {
+app.post('/api/builder/parse-resume', requireBuilderAuth, checkBuilderQuota, upload.single('file'), async (req, res) => {
     try {
         let resumeText = '';
         if (req.file) {
@@ -1154,6 +1259,7 @@ If a field cannot be determined, use an empty string or empty array. Extract eve
             return res.status(500).json({ error: 'Failed to parse AI response as JSON' });
         }
 
+        await deductAIUseServer(req);
         res.json({ resume_data: resumeData, raw_text: resumeText });
     } catch (err) {
         console.error('[Builder] parse-resume error:', err.message);
@@ -1163,7 +1269,7 @@ If a field cannot be determined, use an empty string or empty array. Extract eve
 
 // POST /api/builder/enhance-resume
 // AI-enhances resume content (experience bullets, summary, skills) for a target role
-app.post('/api/builder/enhance-resume', optionalAuth, express.json(), async (req, res) => {
+app.post('/api/builder/enhance-resume', requireBuilderAuth, checkBuilderQuota, express.json(), async (req, res) => {
     try {
         const { experience, skills, summary, job_description, job_title } = req.body || {};
         if (!experience && !skills && !summary) {
@@ -1204,6 +1310,7 @@ ${JSON.stringify({ experience, skills, summary }, null, 2)}`;
             return res.status(500).json({ error: 'Failed to parse AI enhancement response' });
         }
 
+        await deductAIUseServer(req);
         res.json({ enhanced_data: enhancedData });
     } catch (err) {
         console.error('[Builder] enhance-resume error:', err.message);
@@ -1212,7 +1319,7 @@ ${JSON.stringify({ experience, skills, summary }, null, 2)}`;
 });
 
 // POST /api/builder/research-role
-app.post('/api/builder/research-role', optionalAuth, express.json(), async (req, res) => {
+app.post('/api/builder/research-role', requireBuilderAuth, checkBuilderQuota, express.json(), async (req, res) => {
     try {
         const { job_title, company, job_description } = req.body || {};
         if (!job_title) return res.status(400).json({ error: 'job_title is required' });
@@ -1237,6 +1344,7 @@ app.post('/api/builder/research-role', optionalAuth, express.json(), async (req,
             return res.status(500).json({ error: 'Failed to parse AI response as JSON' });
         }
 
+        await deductAIUseServer(req);
         res.json({ role_research: roleResearch });
     } catch (err) {
         console.error('[Builder] research-role error:', err.message);
@@ -1260,7 +1368,7 @@ app.get('/api/builder/plan-count', optionalAuth, async (req, res) => {
 const MAX_PLANS_SUBSCRIBER = 5;
 
 // POST /api/builder/generate
-app.post('/api/builder/generate', optionalAuth, express.json(), async (req, res) => {
+app.post('/api/builder/generate', requireBuilderAuth, checkBuilderQuota, express.json(), async (req, res) => {
     try {
         const { resume_data, role_context, plan_type, sections, job_description, plan_context } = req.body || {};
 
@@ -1372,6 +1480,7 @@ Generate deeply detailed, rich content for each section. Match the depth and qua
             return res.status(500).json({ error: 'Failed to parse AI response as JSON' });
         }
 
+        await deductAIUseServer(req);
         res.json({ generated });
     } catch (err) {
         console.error('[Builder] generate error:', err.message);
@@ -1380,7 +1489,7 @@ Generate deeply detailed, rich content for each section. Match the depth and qua
 });
 
 // POST /api/builder/career-path
-app.post('/api/builder/career-path', optionalAuth, express.json(), async (req, res) => {
+app.post('/api/builder/career-path', requireBuilderAuth, checkBuilderQuota, express.json(), async (req, res) => {
     try {
         const { current_role, target_role, target_company, skills, experience, education } = req.body || {};
         if (!target_role) return res.status(400).json({ error: 'target_role is required' });
@@ -1413,6 +1522,7 @@ Education: ${JSON.stringify(education || [])}`;
         const careerPath = extractJSON(result);
         if (!careerPath) return res.status(500).json({ error: 'Failed to parse career path response' });
 
+        await deductAIUseServer(req);
         res.json(careerPath);
     } catch (err) {
         console.error('[Builder] career-path error:', err.message);
