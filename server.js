@@ -65,7 +65,11 @@ app.use((req, res, next) => {
     next();
 });
 
-app.use(express.json());
+app.use((req, res, next) => {
+    // Skip JSON parsing for Stripe webhook — it needs the raw body for signature verification
+    if (req.originalUrl === '/api/billing/webhook') return next();
+    express.json()(req, res, next);
+});
 app.use(express.urlencoded({ extended: false }));
 
 // Diagnostic endpoint — confirms which version is deployed
@@ -873,21 +877,26 @@ app.post('/api/billing/webhook',
         }
 
         if (event.type === 'customer.subscription.updated') {
-            // Track cancellation-pending (cancel_at_period_end) for builder subs
+            // Track cancellation-pending for builder subs
+            // Stripe uses cancel_at_period_end OR cancel_at (Customer Portal uses cancel_at)
             const sub = event.data.object;
             const builderSnap = await db.collection('builderSubscriptions')
                 .where('stripeSubscriptionId', '==', sub.id).limit(1).get();
             if (!builderSnap.empty) {
+                const isCancelling = sub.cancel_at_period_end || !!sub.cancel_at;
+                const cancelDate = sub.cancel_at
+                    ? new Date(sub.cancel_at * 1000).toISOString()
+                    : (sub.current_period_end ? new Date(sub.current_period_end * 1000).toISOString() : null);
                 const update = {
-                    cancelAtPeriodEnd: sub.cancel_at_period_end || false,
+                    cancelAtPeriodEnd: isCancelling,
                     stripeStatus: sub.status
                 };
-                if (sub.cancel_at_period_end && sub.current_period_end) {
-                    update.periodEndDate = new Date(sub.current_period_end * 1000).toISOString();
+                if (isCancelling) {
+                    update.periodEndDate = cancelDate;
                     update.cancelledAt = new Date().toISOString();
                 }
                 // If they un-cancelled (reactivated), clear the cancel fields
-                if (!sub.cancel_at_period_end) {
+                if (!isCancelling) {
                     update.cancelledAt = null;
                     update.periodEndDate = null;
                 }
@@ -896,7 +905,7 @@ app.post('/api/billing/webhook',
                     update.active = false;
                 }
                 await builderSnap.docs[0].ref.update(update);
-                console.log('[Billing] Builder subscription updated for', sub.id, '| cancel_at_period_end:', sub.cancel_at_period_end);
+                console.log('[Billing] Builder subscription updated for', sub.id, '| cancelling:', isCancelling, '| cancel_at:', sub.cancel_at, '| cancel_at_period_end:', sub.cancel_at_period_end);
             }
         }
 
@@ -969,19 +978,22 @@ app.get('/api/builder/check-subscription', async (req, res) => {
             const d = doc.data();
             const isYT = d.source === 'youtube-membership';
             const result = { subscribed: true, ytMember: isYT };
-            // For Stripe subs, do a live check for cancel_at_period_end
+            // For Stripe subs, do a live check for cancellation status
             if (!isYT && stripe && d.stripeSubscriptionId) {
                 try {
                     const liveSub = await stripe.subscriptions.retrieve(d.stripeSubscriptionId);
-                    const liveCancel = liveSub.cancel_at_period_end || false;
-                    const liveEnd = liveSub.current_period_end ? new Date(liveSub.current_period_end * 1000).toISOString() : null;
+                    // Stripe uses cancel_at_period_end OR cancel_at (Customer Portal uses cancel_at)
+                    const isCancelling = liveSub.cancel_at_period_end || !!liveSub.cancel_at;
+                    const cancelDate = liveSub.cancel_at
+                        ? new Date(liveSub.cancel_at * 1000).toISOString()
+                        : (liveSub.current_period_end ? new Date(liveSub.current_period_end * 1000).toISOString() : null);
                     // Sync to Firestore if changed
-                    if (liveCancel !== (d.cancelAtPeriodEnd || false)) {
+                    if (isCancelling !== (d.cancelAtPeriodEnd || false)) {
                         await db.collection('builderSubscriptions').doc(email).update({
-                            cancelAtPeriodEnd: liveCancel,
+                            cancelAtPeriodEnd: isCancelling,
                             stripeStatus: liveSub.status,
-                            periodEndDate: liveCancel ? liveEnd : null,
-                            cancelledAt: liveCancel ? new Date().toISOString() : null
+                            periodEndDate: isCancelling ? cancelDate : null,
+                            cancelledAt: isCancelling ? new Date().toISOString() : null
                         });
                     }
                     // If sub is no longer active at all, mark inactive
@@ -989,9 +1001,9 @@ app.get('/api/builder/check-subscription', async (req, res) => {
                         await db.collection('builderSubscriptions').doc(email).update({ active: false });
                         return res.json({ subscribed: false, hadSubscription: true });
                     }
-                    if (liveCancel) {
+                    if (isCancelling) {
                         result.cancelAtPeriodEnd = true;
-                        result.periodEndDate = liveEnd;
+                        result.periodEndDate = cancelDate;
                     }
                 } catch (stripeErr) {
                     console.warn('[Builder] Live Stripe check failed:', stripeErr.message);
@@ -1000,6 +1012,7 @@ app.get('/api/builder/check-subscription', async (req, res) => {
                         result.cancelAtPeriodEnd = true;
                         result.periodEndDate = d.periodEndDate || null;
                     }
+                }
                 }
             } else if (d.cancelAtPeriodEnd) {
                 result.cancelAtPeriodEnd = true;
@@ -1016,24 +1029,28 @@ app.get('/api/builder/check-subscription', async (req, res) => {
                     const validSubs = subs.data.filter(s => s.status === 'active' || s.status === 'trialing');
                     if (validSubs.length > 0) {
                         const sub = validSubs[0];
+                        const isCancelling = sub.cancel_at_period_end || !!sub.cancel_at;
+                        const cancelDate = sub.cancel_at
+                            ? new Date(sub.cancel_at * 1000).toISOString()
+                            : (sub.current_period_end ? new Date(sub.current_period_end * 1000).toISOString() : null);
                         // Active sub found in Stripe — sync to Firestore
                         const syncData = {
                             active: true, source: 'stripe',
                             stripeCustomerId: customer.id,
                             stripeSubscriptionId: sub.id,
-                            cancelAtPeriodEnd: sub.cancel_at_period_end || false,
+                            cancelAtPeriodEnd: isCancelling,
                             stripeStatus: sub.status,
                             syncedAt: new Date().toISOString()
                         };
-                        if (sub.cancel_at_period_end && sub.current_period_end) {
-                            syncData.periodEndDate = new Date(sub.current_period_end * 1000).toISOString();
+                        if (isCancelling) {
+                            syncData.periodEndDate = cancelDate;
                         }
                         await db.collection('builderSubscriptions').doc(email).set(syncData, { merge: true });
-                        console.log('[Builder] Stripe fallback sync for', email, '| cancel_at_period_end:', sub.cancel_at_period_end);
+                        console.log('[Builder] Stripe fallback sync for', email, '| cancelling:', isCancelling);
                         const result = { subscribed: true };
-                        if (sub.cancel_at_period_end) {
+                        if (isCancelling) {
                             result.cancelAtPeriodEnd = true;
-                            result.periodEndDate = syncData.periodEndDate || null;
+                            result.periodEndDate = cancelDate;
                         }
                         return res.json(result);
                     }
