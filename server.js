@@ -969,8 +969,39 @@ app.get('/api/builder/check-subscription', async (req, res) => {
             const d = doc.data();
             const isYT = d.source === 'youtube-membership';
             const result = { subscribed: true, ytMember: isYT };
-            // Include cancellation-pending info
-            if (d.cancelAtPeriodEnd) {
+            // For Stripe subs, do a live check for cancel_at_period_end
+            if (!isYT && stripe && d.stripeSubscriptionId) {
+                try {
+                    const liveSub = await stripe.subscriptions.retrieve(d.stripeSubscriptionId);
+                    const liveCancel = liveSub.cancel_at_period_end || false;
+                    const liveEnd = liveSub.current_period_end ? new Date(liveSub.current_period_end * 1000).toISOString() : null;
+                    // Sync to Firestore if changed
+                    if (liveCancel !== (d.cancelAtPeriodEnd || false)) {
+                        await db.collection('builderSubscriptions').doc(email).update({
+                            cancelAtPeriodEnd: liveCancel,
+                            stripeStatus: liveSub.status,
+                            periodEndDate: liveCancel ? liveEnd : null,
+                            cancelledAt: liveCancel ? new Date().toISOString() : null
+                        });
+                    }
+                    // If sub is no longer active at all, mark inactive
+                    if (liveSub.status !== 'active' && liveSub.status !== 'trialing') {
+                        await db.collection('builderSubscriptions').doc(email).update({ active: false });
+                        return res.json({ subscribed: false, hadSubscription: true });
+                    }
+                    if (liveCancel) {
+                        result.cancelAtPeriodEnd = true;
+                        result.periodEndDate = liveEnd;
+                    }
+                } catch (stripeErr) {
+                    console.warn('[Builder] Live Stripe check failed:', stripeErr.message);
+                    // Fall back to Firestore data
+                    if (d.cancelAtPeriodEnd) {
+                        result.cancelAtPeriodEnd = true;
+                        result.periodEndDate = d.periodEndDate || null;
+                    }
+                }
+            } else if (d.cancelAtPeriodEnd) {
                 result.cancelAtPeriodEnd = true;
                 result.periodEndDate = d.periodEndDate || null;
             }
