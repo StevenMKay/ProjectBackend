@@ -77,11 +77,16 @@ app.get('/api/ping', (req, res) => res.json({ ok: true, version: 'v3' }));
 
 const API_KEY = process.env.YOUTUBE_API_KEY || 'YOUR_YOUTUBE_API_KEY';
 
+const BACKEND_URL = process.env.BACKEND_URL || 'https://projectbackend-production-aa38.up.railway.app';
+
+/*
 // YouTube OAuth configuration for membership verification
+// Temporarily disabled for the resume builder while Stripe is the only live access path.
+// To restore: uncomment these env bindings, restore createYTOAuthClient(), and re-enable
+// /api/builder/youtube-auth-url plus /api/builder/youtube-callback below.
 const GOOGLE_CLIENT_ID     = process.env.GOOGLE_CLIENT_ID;
 const GOOGLE_CLIENT_SECRET = process.env.GOOGLE_CLIENT_SECRET;
 const YT_OWNER_REFRESH_TOKEN = process.env.YT_OWNER_REFRESH_TOKEN;
-const BACKEND_URL = process.env.BACKEND_URL || 'https://projectbackend-production-aa38.up.railway.app';
 
 function createYTOAuthClient() {
     return new google.auth.OAuth2(
@@ -90,6 +95,7 @@ function createYTOAuthClient() {
         BACKEND_URL + '/api/builder/youtube-callback'
     );
 }
+*/
 
 // ============================================================
 // YOUTUBE PROXY (existing)
@@ -976,10 +982,9 @@ app.get('/api/builder/check-subscription', async (req, res) => {
         const doc = await db.collection('builderSubscriptions').doc(email).get();
         if (doc.exists && doc.data().active) {
             const d = doc.data();
-            const isYT = d.source === 'youtube-membership';
-            const result = { subscribed: true, ytMember: isYT };
+            const result = { subscribed: true };
             // For Stripe subs, do a live check for cancellation status
-            if (!isYT && stripe && d.stripeSubscriptionId) {
+            if (stripe && d.stripeSubscriptionId) {
                 try {
                     const liveSub = await stripe.subscriptions.retrieve(d.stripeSubscriptionId);
                     // Stripe uses cancel_at_period_end OR cancel_at (Customer Portal uses cancel_at)
@@ -1986,14 +1991,14 @@ app.post('/api/builder/import-linkedin-job', optionalAuth, express.json(), async
     }
 });
 
+/*
 // ============================================================
 // YOUTUBE MEMBERSHIP VERIFICATION (OAuth flow)
 // ============================================================
-// Requires env vars: GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET,
-// YT_OWNER_REFRESH_TOKEN (channel owner's token with
-// youtube.channel-memberships.creator scope)
+// Temporarily disabled while Stripe is the only active resume builder access path.
+// To restore: uncomment this block, restore the YouTube env vars/createYTOAuthClient() above,
+// and re-enable the front-end YouTube paywall card plus verify handler.
 
-// Step 1: Return a Google OAuth consent URL for the user
 app.get('/api/builder/youtube-auth-url', (req, res) => {
     const email = (req.query.email || '').trim().toLowerCase();
     if (!email) return res.status(400).json({ error: 'Email is required' });
@@ -2002,7 +2007,6 @@ app.get('/api/builder/youtube-auth-url', (req, res) => {
     }
     try {
         const oauth2Client = createYTOAuthClient();
-        // state carries the user email so callback can associate the result
         const state = Buffer.from(JSON.stringify({ email })).toString('base64url');
         const url = oauth2Client.generateAuthUrl({
             access_type: 'offline',
@@ -2017,102 +2021,10 @@ app.get('/api/builder/youtube-auth-url', (req, res) => {
     }
 });
 
-// Step 2: OAuth callback — identify user's channel, check membership via owner token
 app.get('/api/builder/youtube-callback', async (req, res) => {
-    const { code, state, error: oauthError } = req.query;
-
-    // Helper to send result back to popup opener
-    function sendPopupResult(type, message) {
-        const escaped = (message || '').replace(/'/g, "\\'").replace(/</g, '&lt;');
-        const origin = process.env.SITE_URL || 'https://www.careersolutionsfortoday.com';
-        return res.send(`<!DOCTYPE html><html><head><title>YouTube Verification</title></head><body>
-            <p>${type === 'yt-membership-verified' ? '&#10003; Membership verified! This window will close.' : escaped}</p>
-            <script>
-                if (window.opener) {
-                    window.opener.postMessage({ type: '${type}', message: '${escaped}' }, '${origin}');
-                }
-                setTimeout(function() { window.close(); }, 2000);
-            </script>
-        </body></html>`);
-    }
-
-    if (oauthError) {
-        console.error('[YT Callback] OAuth error:', oauthError);
-        return sendPopupResult('yt-membership-failed', 'Authorization was cancelled or denied.');
-    }
-
-    if (!code || !state) {
-        return sendPopupResult('yt-membership-failed', 'Invalid callback parameters.');
-    }
-
-    let email;
-    try {
-        const parsed = JSON.parse(Buffer.from(state, 'base64url').toString());
-        email = (parsed.email || '').toLowerCase().trim();
-    } catch {
-        return sendPopupResult('yt-membership-failed', 'Invalid state parameter.');
-    }
-
-    if (!email) {
-        return sendPopupResult('yt-membership-failed', 'Could not determine user email.');
-    }
-
-    try {
-        // Exchange authorization code for user tokens
-        const oauth2Client = createYTOAuthClient();
-        const { tokens } = await oauth2Client.getToken(code);
-        oauth2Client.setCredentials(tokens);
-
-        // Get the user's YouTube channel ID
-        const youtube = google.youtube({ version: 'v3', auth: oauth2Client });
-        const channelsRes = await youtube.channels.list({ part: 'id,snippet', mine: true });
-        const userChannels = channelsRes.data.items || [];
-        if (userChannels.length === 0) {
-            return sendPopupResult('yt-membership-failed', 'No YouTube channel found for your Google account. Please make sure you have a YouTube channel.');
-        }
-        const userChannelId = userChannels[0].id;
-        console.log(`[YT Callback] User ${email} has channel ${userChannelId}`);
-
-        // Check membership using channel owner's stored refresh token
-        if (!YT_OWNER_REFRESH_TOKEN) {
-            return sendPopupResult('yt-membership-failed', 'YouTube membership verification is not fully configured. Please contact support.');
-        }
-        const ownerClient = createYTOAuthClient();
-        ownerClient.setCredentials({ refresh_token: YT_OWNER_REFRESH_TOKEN });
-
-        const ownerYT = google.youtube({ version: 'v3', auth: ownerClient });
-        const membersRes = await ownerYT.memberships.list({
-            part: 'snippet',
-            mode: 'list_members',
-            filterByMemberChannelId: userChannelId
-        });
-
-        const members = membersRes.data.items || [];
-        if (members.length > 0) {
-            // Membership confirmed — save to Firestore
-            console.log(`[YT Callback] Membership VERIFIED for ${email} (channel ${userChannelId})`);
-            if (db) {
-                await db.collection('builderSubscriptions').doc(email).set({
-                    active: true,
-                    source: 'youtube-membership',
-                    ytChannelId: userChannelId,
-                    verifiedAt: FieldValue.serverTimestamp()
-                }, { merge: true });
-            }
-            return sendPopupResult('yt-membership-verified', 'YouTube membership verified!');
-        } else {
-            console.log(`[YT Callback] No membership found for ${email} (channel ${userChannelId})`);
-            return sendPopupResult('yt-membership-failed', 'YouTube membership not found. Please join the channel first, then try again.');
-        }
-    } catch (err) {
-        console.error('[YT Callback] Error:', err.message);
-        // Specific error for memberships API not available
-        if (err.message && err.message.includes('memberships')) {
-            return sendPopupResult('yt-membership-failed', 'YouTube memberships API is not available for this channel. Please contact support.');
-        }
-        return sendPopupResult('yt-membership-failed', 'Verification failed: ' + (err.message || 'Unknown error'));
-    }
+    // Full route intentionally commented out.
 });
+*/
 
 // ============================================================
 // START SERVER
