@@ -867,8 +867,36 @@ app.post('/api/billing/webhook',
             const builderSnap = await db.collection('builderSubscriptions')
                 .where('stripeSubscriptionId', '==', sub.id).limit(1).get();
             if (!builderSnap.empty) {
-                await builderSnap.docs[0].ref.update({ active: false });
+                await builderSnap.docs[0].ref.update({ active: false, cancelAtPeriodEnd: false, cancelledAt: new Date().toISOString() });
                 console.log('[Billing] Deactivated builder subscription for', sub.id);
+            }
+        }
+
+        if (event.type === 'customer.subscription.updated') {
+            // Track cancellation-pending (cancel_at_period_end) for builder subs
+            const sub = event.data.object;
+            const builderSnap = await db.collection('builderSubscriptions')
+                .where('stripeSubscriptionId', '==', sub.id).limit(1).get();
+            if (!builderSnap.empty) {
+                const update = {
+                    cancelAtPeriodEnd: sub.cancel_at_period_end || false,
+                    stripeStatus: sub.status
+                };
+                if (sub.cancel_at_period_end && sub.current_period_end) {
+                    update.periodEndDate = new Date(sub.current_period_end * 1000).toISOString();
+                    update.cancelledAt = new Date().toISOString();
+                }
+                // If they un-cancelled (reactivated), clear the cancel fields
+                if (!sub.cancel_at_period_end) {
+                    update.cancelledAt = null;
+                    update.periodEndDate = null;
+                }
+                // If status is no longer active/trialing, mark inactive
+                if (sub.status !== 'active' && sub.status !== 'trialing') {
+                    update.active = false;
+                }
+                await builderSnap.docs[0].ref.update(update);
+                console.log('[Billing] Builder subscription updated for', sub.id, '| cancel_at_period_end:', sub.cancel_at_period_end);
             }
         }
 
@@ -938,8 +966,15 @@ app.get('/api/builder/check-subscription', async (req, res) => {
         if (!db) return res.json({ subscribed: false });
         const doc = await db.collection('builderSubscriptions').doc(email).get();
         if (doc.exists && doc.data().active) {
-            const isYT = doc.data().source === 'youtube-membership';
-            return res.json({ subscribed: true, ytMember: isYT });
+            const d = doc.data();
+            const isYT = d.source === 'youtube-membership';
+            const result = { subscribed: true, ytMember: isYT };
+            // Include cancellation-pending info
+            if (d.cancelAtPeriodEnd) {
+                result.cancelAtPeriodEnd = true;
+                result.periodEndDate = d.periodEndDate || null;
+            }
+            return res.json(result);
         }
         // Firestore miss — check Stripe directly as fallback & self-heal
         if (stripe) {
@@ -949,15 +984,27 @@ app.get('/api/builder/check-subscription', async (req, res) => {
                     const subs = await stripe.subscriptions.list({ customer: customer.id, limit: 10 });
                     const validSubs = subs.data.filter(s => s.status === 'active' || s.status === 'trialing');
                     if (validSubs.length > 0) {
+                        const sub = validSubs[0];
                         // Active sub found in Stripe — sync to Firestore
-                        await db.collection('builderSubscriptions').doc(email).set({
+                        const syncData = {
                             active: true, source: 'stripe',
                             stripeCustomerId: customer.id,
-                            stripeSubscriptionId: validSubs[0].id,
+                            stripeSubscriptionId: sub.id,
+                            cancelAtPeriodEnd: sub.cancel_at_period_end || false,
+                            stripeStatus: sub.status,
                             syncedAt: new Date().toISOString()
-                        }, { merge: true });
-                        console.log('[Builder] Stripe fallback sync for', email);
-                        return res.json({ subscribed: true });
+                        };
+                        if (sub.cancel_at_period_end && sub.current_period_end) {
+                            syncData.periodEndDate = new Date(sub.current_period_end * 1000).toISOString();
+                        }
+                        await db.collection('builderSubscriptions').doc(email).set(syncData, { merge: true });
+                        console.log('[Builder] Stripe fallback sync for', email, '| cancel_at_period_end:', sub.cancel_at_period_end);
+                        const result = { subscribed: true };
+                        if (sub.cancel_at_period_end) {
+                            result.cancelAtPeriodEnd = true;
+                            result.periodEndDate = syncData.periodEndDate || null;
+                        }
+                        return res.json(result);
                     }
                 }
             } catch (stripeErr) {
