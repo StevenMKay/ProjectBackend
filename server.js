@@ -974,6 +974,28 @@ app.get('/api/builder/check-subscription', async (req, res) => {
     }
 });
 
+// Create Stripe Customer Portal session for resume builder subscribers
+app.post('/api/builder/portal', async (req, res) => {
+    try {
+        if (!stripe) return res.status(503).json({ error: 'Billing not configured' });
+        if (!db) return res.status(503).json({ error: 'Database not configured' });
+        const email = (req.body.email || '').toLowerCase().trim();
+        if (!email) return res.status(400).json({ error: 'Email required' });
+        const doc = await db.collection('builderSubscriptions').doc(email).get();
+        if (!doc.exists || !doc.data().stripeCustomerId) {
+            return res.status(400).json({ error: 'No Stripe billing account found for this email.' });
+        }
+        const session = await stripe.billingPortal.sessions.create({
+            customer: doc.data().stripeCustomerId,
+            return_url: `${process.env.SITE_URL || 'https://www.careersolutionsfortoday.com'}/resumebuilder.html`,
+        });
+        res.json({ url: session.url });
+    } catch (err) {
+        console.error('[Builder] Portal error:', err.message);
+        res.status(500).json({ error: 'Failed to open billing portal' });
+    }
+});
+
 // ============================================================
 // RESUME BUILDER API ROUTES
 // ============================================================
