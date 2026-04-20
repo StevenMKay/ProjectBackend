@@ -1013,7 +1013,6 @@ app.get('/api/builder/check-subscription', async (req, res) => {
                         result.periodEndDate = d.periodEndDate || null;
                     }
                 }
-                }
             } else if (d.cancelAtPeriodEnd) {
                 result.cancelAtPeriodEnd = true;
                 result.periodEndDate = d.periodEndDate || null;
