@@ -941,6 +941,28 @@ app.get('/api/builder/check-subscription', async (req, res) => {
             const isYT = doc.data().source === 'youtube-membership';
             return res.json({ subscribed: true, ytMember: isYT });
         }
+        // Firestore miss — check Stripe directly as fallback & self-heal
+        if (stripe) {
+            try {
+                const customers = await stripe.customers.list({ email, limit: 5 });
+                for (const customer of customers.data) {
+                    const subs = await stripe.subscriptions.list({ customer: customer.id, status: 'active', limit: 5 });
+                    if (subs.data.length > 0) {
+                        // Active sub found in Stripe — sync to Firestore
+                        await db.collection('builderSubscriptions').doc(email).set({
+                            active: true, source: 'stripe',
+                            stripeCustomerId: customer.id,
+                            stripeSubscriptionId: subs.data[0].id,
+                            syncedAt: new Date().toISOString()
+                        }, { merge: true });
+                        console.log('[Builder] Stripe fallback sync for', email);
+                        return res.json({ subscribed: true });
+                    }
+                }
+            } catch (stripeErr) {
+                console.error('[Builder] Stripe fallback check error:', stripeErr.message);
+            }
+        }
         if (doc.exists) {
             return res.json({ subscribed: false, hadSubscription: true });
         }
