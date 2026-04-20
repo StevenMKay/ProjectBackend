@@ -909,7 +909,7 @@ app.post('/api/builder/checkout', async (req, res) => {
         const { email } = req.body;
         if (!email || !email.includes('@')) return res.status(400).json({ error: 'Valid email is required' });
 
-        const priceId = process.env.STRIPE_PRICE_BUILDER || 'price_1TKfmxLdhN0HRKYRdcAu2rwN';
+        const priceId = process.env.STRIPE_PRICE_BUILDER || 'price_1TOEQALdhN0HRKYRghpw5xsW';
 
         const session = await stripe.checkout.sessions.create({
             mode: 'subscription',
@@ -938,7 +938,8 @@ app.get('/api/builder/check-subscription', async (req, res) => {
         if (!db) return res.json({ subscribed: false });
         const doc = await db.collection('builderSubscriptions').doc(email).get();
         if (doc.exists && doc.data().active) {
-            return res.json({ subscribed: true });
+            const isYT = doc.data().source === 'youtube-membership';
+            return res.json({ subscribed: true, ytMember: isYT });
         }
         if (doc.exists) {
             return res.json({ subscribed: false, hadSubscription: true });
