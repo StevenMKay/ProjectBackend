@@ -1547,66 +1547,115 @@ app.post('/api/builder/analyze-resume', requireBuilderAuth, checkBuilderQuota, e
 
 Output STRICT JSON matching the schema below. No markdown fences. No prose outside JSON. Every numeric score is an integer 0-100.
 
-SCORING RUBRIC (calibrate overall_score):
-- 90-100: Top 5% candidate. JD keywords >=85% present, every experience bullet quantified, zero structural issues, clear story arc.
-- 75-89: Strong. >=70% keyword match, most bullets quantified, minor gaps only.
-- 60-74: Average. Generic phrasing, <50% quantified bullets, multiple missing keywords.
+SCORING RUBRIC (calibrate resume_match_score):
+- 90-100: Top 5%. JD keywords >=85% present, every bullet quantified, clear story arc.
+- 75-89: Strong. >=70% keyword match, most bullets quantified.
+- 60-74: Average. Generic phrasing, <50% quantified.
 - 45-59: Below average. Weak verbs, no metrics, ATS-unfriendly.
 - 0-44: Not viable for this role.
-Do NOT default to 75. Without a job description, cap overall_score at 70 unless the resume is genuinely exceptional.
+Do NOT default to 75. Without a job description, cap resume_match_score at 70 unless genuinely exceptional.
 
-DECISION RULE: PASS = would advance to phone screen. BORDERLINE = would advance only if pipeline is thin. REJECT = would not advance.
+STATUS MAPPING (must match score):
+- 85-100 => "Strong"
+- 75-84  => "Competitive"
+- 60-74  => "Borderline"
+- 45-59  => "Weak"
+- 0-44   => "High Risk"
 
-COMPETITIVE BENCHMARK: top_candidate_would_say = 3-5 specific bullet examples a top-10% candidate for this JD would have on their resume. why_this_candidate_loses = 3-5 specific reasons THIS resume loses to that top candidate (cite evidence).
+INTERVIEW LIKELIHOOD:
+- score >=75 => "Likely to get interview"
+- score 60-74 => "May get interview with minor fixes"
+- score <60  => "Unlikely to get interview without changes"
 
-BULLET GRADING: For experience bullets, classify strong/weak. A bullet is STRONG only if it has (a) strong action verb, (b) quantified result (%, $, #, time), AND (c) clear business context. Provide at least 3 rewrites that preserve truth but add impact \u2014 use [placeholder] tokens like [X%], [$Xm], [N-person team] where a metric is plausible but unknown. NEVER invent specific numbers.
+OVERALL ASSESSMENT: 2-3 sentences max, tone matches score. If score < 80, highlight risk clearly. If score >= 80, highlight competitiveness. No vague praise like "strong" unless justified by specific resume evidence.
 
-90-DAY PLAN CREDIBILITY: Given the resume's evidence, score 0-100 how credibly this candidate could execute a 90-day plan for the target role. List gaps (skills/evidence missing) that would undermine credibility in week-1 conversations with the hiring manager.
+TOP RISKS: Exactly 3 concise, direct, outcome-focused reasons the candidate may NOT get an interview. Each tied to specific resume content or JD gaps. Example: "Lack of quantified impact weakens credibility" or "Missing core keywords: Tableau, SQL, dashboards".
 
-ATS SIMULATION: ats.passes = true only if (format parseable + >=70% keyword match + no graphic-only text + standard section headings). List missing_keywords from the JD, case-normalized, deduped.
+TOP STRENGTHS: Exactly 3 concrete differentiators from THIS resume. Each cites specific evidence. No generic praise.
 
-Return JSON with exactly this shape:
+TOP FIXES: Exactly 5 highest-impact improvements, ranked by impact. Each includes fix text and estimated score_impact (integer +1 to +15). Example: { "fix": "Add metrics to 5 experience bullets", "score_impact": 8 }. Sum of score_impact must be realistic (typically 15-35 total).
+
+BENCHMARK: Heuristic comparison against strong candidates. DO NOT claim real hiring data.
+- top_candidate_patterns: 3-5 patterns top candidates for this JD typically show.
+- matches: where THIS resume hits those patterns (cite evidence).
+- gaps: where THIS resume falls short (cite evidence).
+
+SCORE BREAKDOWN (each 0-100):
+- keyword_alignment: overlap with JD's critical keywords/requirements.
+- bullet_strength: % of bullets with strong verb + quantified result + context.
+- experience_relevance: how closely prior roles map to target role responsibilities.
+- clarity_structure: formatting, readability, logical flow, ATS-safe headings.
+- seniority_signals: leadership/scope/ownership signals vs JD's seniority bar.
+
+INTERVIEW PREP (premium-grade, role-specific):
+Generate exactly these groups:
+- likely_questions: 4 questions an interviewer for THIS role is most likely to ask, grounded in both the resume AND the JD.
+- high_risk_questions: 2 questions that probe THIS resume's weakest evidence (where the candidate is most likely to fumble).
+- high_impact_questions: 2 questions where THIS candidate could stand out given their strongest resume evidence.
+
+For EACH question (all 8), return this exact shape:
 {
-  "overall_score": 0,
-  "decision": "PASS|BORDERLINE|REJECT",
-  "recruiter_first_impression": "10-second verdict, 1-2 sentences, brutally honest",
-  "ten_second_reject_reasons": ["specific reason citing resume text","..."],
-  "overall_summary": "2-3 sentence hiring-manager assessment citing specific resume content",
-  "score_breakdown": [
-    {"category":"Job Alignment","score":0,"weight":25,"reason":"cite evidence"},
-    {"category":"Quantified Impact","score":0,"weight":25,"reason":"..."},
-    {"category":"Bullet Strength","score":0,"weight":15,"reason":"..."},
-    {"category":"ATS Compatibility","score":0,"weight":15,"reason":"..."},
-    {"category":"Structure & Clarity","score":0,"weight":10,"reason":"..."},
-    {"category":"90-Day Credibility","score":0,"weight":10,"reason":"..."}
-  ],
-  "job_alignment": {"alignment_score":0,"top_requirements":[{"requirement":"from JD","importance":"High","match_score":0,"gap":"specific"}]},
-  "bullet_strength": {
-    "score":0,
-    "strong_bullets":[{"text":"...","company":"...","why":"..."}],
-    "weak_bullets":[{"text":"...","company":"...","why":"..."}],
-    "rewrites":[{"field_path":"experience[0].bullets[2]","original":"...","improved":"... with [X%] impact","reason":"...","keywords_added":["..."],"metric_added":true}]
-  },
-  "quantification": {"score":0,"missing_metrics":["..."],"suggested_metrics":["..."]},
-  "competitive_analysis": {"top_candidate_would_say":["..."],"why_this_candidate_loses":["..."]},
-  "ats": {"score":0,"passes":true,"issues":["..."],"missing_keywords":["..."]},
-  "ninety_day_plan_alignment": {"credibility_score":0,"gaps":["..."],"supporting_evidence":["..."]},
-  "sections": [{"name":"Experience","status":"good|warning|critical","feedback":"...","improvements":["..."]}],
-  "strengths": ["cite specific resume content"],
-  "weaknesses": ["cite specific resume content"],
-  "top_5_fixes": ["ordered by impact \u2014 each fix names the exact bullet/section and the change to make"],
-  "star_stories": [{"question":"...","situation":"...","task":"...","action":"...","result":"...","sample_answer":"..."}],
-  "missing_keywords": ["..."],
-  "recommendations": ["..."],
-  "ats_analysis": {"score":0,"feedback":"mirrors ats for UI backward-compat","issues":["..."]}
+  "question": "...",
+  "type": "behavioral|technical|strategic",
+  "importance": "high|medium|low",
+  "risk_level": "high|medium|low",
+  "answer_format": "STAR|structured",
+  "answer": { /* STAR or structured, see below */ },
+  "why_this_works": "1-2 sentences explaining why this answer wins",
+  "risk_if_weak": "1-2 sentences explaining how the candidate could fail this question"
 }
 
-Rules:
-- Cite exact phrases from the resume in feedback where possible.
-- If no JD, set job_alignment.alignment_score to null and leave missing_keywords = [].
-- Minimum 4 star_stories.
-- No placeholder prose like "consider adding metrics" \u2014 always name the exact bullet and exact metric type.
-- ats_analysis is a mirror of ats for legacy UI consumers \u2014 keep both in sync.`;
+ANSWER FORMAT RULES:
+- behavioral or experience-based questions => answer_format = "STAR", answer = { "situation":"...", "task":"...", "action":["step 1","step 2","step 3"], "result":"..." }
+- technical, opinion, or general questions => answer_format = "structured", answer = { "key_points":["point 1","point 2","point 3","point 4"] }
+
+Rules for answers:
+- Concise, realistic, first-person.
+- Use placeholder tokens like [X%], [$Xm], [N-person team] if a metric is plausible but unknown. NEVER fabricate specific numbers.
+- Every answer must reference specific resume content (companies, tools, systems, or domains from the resume) when possible.
+- STAR.action must be an ARRAY of 2-3 short steps, not a paragraph.
+
+FINAL OUTPUT - STRICT JSON:
+{
+  "analysis": {
+    "resume_match_score": 0,
+    "status": "Strong|Competitive|Borderline|Weak|High Risk",
+    "interview_likelihood": "Likely to get interview|May get interview with minor fixes|Unlikely to get interview without changes",
+    "overall_assessment": "2-3 sentences tied to this resume and this job",
+    "score_breakdown": {
+      "keyword_alignment": 0,
+      "bullet_strength": 0,
+      "experience_relevance": 0,
+      "clarity_structure": 0,
+      "seniority_signals": 0
+    },
+    "top_risks": ["...","...","..."],
+    "top_strengths": ["...","...","..."],
+    "top_fixes": [
+      {"fix":"...","score_impact":0},
+      {"fix":"...","score_impact":0},
+      {"fix":"...","score_impact":0},
+      {"fix":"...","score_impact":0},
+      {"fix":"...","score_impact":0}
+    ],
+    "benchmark": {
+      "top_candidate_patterns": ["...","..."],
+      "matches": ["..."],
+      "gaps": ["..."]
+    }
+  },
+  "interview_prep": {
+    "likely_questions": [ /* 4 entries per question schema above */ ],
+    "high_risk_questions": [ /* 2 entries */ ],
+    "high_impact_questions": [ /* 2 entries */ ]
+  }
+}
+
+FINAL RULES:
+- Do NOT generate generic advice. Everything must tie to THIS resume and THIS job.
+- Do NOT contradict the score. If score < 60, the tone must reflect risk; if >= 85, the tone must reflect competitiveness.
+- Do NOT pad \u2014 short bullets, not paragraphs.
+- Do NOT include any field not in the schema. Do not wrap in markdown.`;
 
         const jd = (job_description || '').toString().trim();
         const userPrompt = `Target Title: ${job_title || 'Not specified'}
@@ -1618,19 +1667,97 @@ Resume:
 ${resumeText}`;
 
         const result = await callOpenAI(apiKey, systemPrompt, userPrompt, 'gpt-4o', 6000, true, 0.2);
-        const analysis = extractJSON(result);
-        if (!analysis) {
-            console.error('[Builder] analyze-resume: unparseable AI response:', result.slice(0, 500));
+        const parsed = extractJSON(result);
+        if (!parsed || !parsed.analysis) {
+            console.error('[Builder] analyze-resume: unparseable AI response:', (result || '').slice(0, 500));
             return res.status(500).json({ error: 'Failed to parse AI analysis response' });
         }
-        // Backward-compat: ensure ats_analysis mirrors ats
-        if (analysis.ats && !analysis.ats_analysis) {
-            analysis.ats_analysis = { score: analysis.ats.score, feedback: (analysis.ats.issues || []).join(' '), issues: analysis.ats.issues || [] };
+
+        // Backward-compat aliases so legacy frontend code reading overall_score still works.
+        const a = parsed.analysis;
+        if (a && typeof a.resume_match_score === 'number' && typeof a.overall_score !== 'number') {
+            a.overall_score = a.resume_match_score;
         }
+
         await deductAIUseServer(req);
-        res.json({ success: true, analysis });
+        // Return flat shape (analysis + interview_prep) plus legacy analysis object for existing callers.
+        res.json({ success: true, analysis: a, interview_prep: parsed.interview_prep || null });
     } catch (err) {
         console.error('[Builder] analyze-resume error:', err.message);
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// ============================================================
+// POST /api/builder/interview-prep-refresh  (regenerate interview prep only)
+// ============================================================
+app.post('/api/builder/interview-prep-refresh', requireBuilderAuth, checkBuilderQuota, express.json(), async (req, res) => {
+    try {
+        const { resume_text, resume_data, job_description, job_title, company, prior_analysis, seed } = req.body || {};
+        let resumeText = (resume_text || '').toString();
+        if (!resumeText && resume_data) {
+            const r = resume_data;
+            const expLines = (r.experience || []).map(e => `${e.title || ''} at ${e.company || ''} (${e.dates || ''})\n${(e.bullets || []).map(b => (typeof b === 'string' ? b : (b.text || ''))).join('\n')}`);
+            resumeText = [r.name, r.current_title, r.summary, ...expLines, 'Skills: ' + ((r.skills || []).join(', ')), ...((r.education || []).map(e => `${e.degree || ''} - ${e.school || ''} ${e.year || ''}`))].filter(Boolean).join('\n\n');
+        }
+        if (!resumeText || resumeText.trim().length < 50) {
+            return res.status(400).json({ error: 'Resume content missing or too short' });
+        }
+        const apiKey = await getOpenAIKey(req);
+        if (!apiKey) return res.status(500).json({ error: 'AI service temporarily unavailable. Please try again later.' });
+
+        const systemPrompt = `You are a senior hiring manager generating premium interview prep for a specific candidate and role. Return STRICT JSON only. No markdown.
+
+Generate exactly:
+- likely_questions: 4 questions most likely from an interviewer for THIS role, grounded in the resume AND the JD.
+- high_risk_questions: 2 questions probing the resume's weakest evidence.
+- high_impact_questions: 2 questions where this candidate can stand out given their strongest evidence.
+
+For EACH question, return:
+{
+  "question":"...",
+  "type":"behavioral|technical|strategic",
+  "importance":"high|medium|low",
+  "risk_level":"high|medium|low",
+  "answer_format":"STAR|structured",
+  "answer": { /* see rules */ },
+  "why_this_works":"1-2 sentences",
+  "risk_if_weak":"1-2 sentences"
+}
+
+ANSWER RULES:
+- behavioral or experience-based => answer_format="STAR", answer={situation,task,action:[2-3 steps],result}
+- technical/opinion/general => answer_format="structured", answer={key_points:[3-5 short points]}
+- Concise, realistic, first-person. Use [X%], [$Xm], [N-person team] placeholders if a metric is plausible but unknown. NEVER fabricate specific numbers.
+- Every answer must reference specific resume content.
+
+IMPORTANT: Generate DIFFERENT questions from any prior set (you'll receive a seed). Do not repeat question wording.
+
+Return: { "interview_prep": { "likely_questions":[], "high_risk_questions":[], "high_impact_questions":[] } }`;
+
+        const userPrompt = `Target Title: ${job_title || 'Not specified'}
+Target Company: ${company || 'Not specified'}
+Job Description:
+${(job_description || 'Not provided').toString().slice(0, 4000)}
+
+Resume:
+${resumeText.slice(0, 8000)}
+
+Prior Analysis (for context, do not copy):
+${prior_analysis ? JSON.stringify(prior_analysis).slice(0, 3000) : 'none'}
+
+Diversity Seed: ${seed || Date.now()} \u2014 use this to make sure you produce DIFFERENT questions than any prior run.`;
+
+        const result = await callOpenAI(apiKey, systemPrompt, userPrompt, 'gpt-4o', 3000, true, 0.6);
+        const parsed = extractJSON(result);
+        if (!parsed || !parsed.interview_prep) {
+            console.error('[Builder] interview-prep-refresh: unparseable AI response:', (result || '').slice(0, 500));
+            return res.status(500).json({ error: 'Failed to parse interview prep response' });
+        }
+        await deductAIUseServer(req);
+        res.json({ success: true, interview_prep: parsed.interview_prep });
+    } catch (err) {
+        console.error('[Builder] interview-prep-refresh error:', err.message);
         res.status(500).json({ error: err.message });
     }
 });
