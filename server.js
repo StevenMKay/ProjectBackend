@@ -1421,7 +1421,12 @@ BULLET ASSIGNMENT STRATEGY:
 3. Second pass: for each bullet point or accomplishment, assign it to the job header that IMMEDIATELY PRECEDES it in the document flow. If sidebar text (skills, contact info, education) is interleaved between a job header and its bullets, skip over the sidebar text and still assign the bullets to the preceding job header.
 4. NEVER assign a bullet to a role that comes later in the document or that has a date range inconsistent with the bullet's context.
 5. If unsure, use the date range and job context to determine the correct assignment.
-If a field cannot be determined, use an empty string or empty array. Extract every detail available — do not skip sections.`;
+If a field cannot be determined, use an empty string or empty array. Extract every detail available — do not skip sections.
+
+ADDITIONAL SIGNAL EXTRACTION (append only — do not change the core schema above):
+- For each experience object, add "is_quantified_count": integer (number of bullets that contain a numeric metric such as %, $, #, time, team size, volume).
+- For each experience object, add "role_keywords": array of 5-8 distinctive terms describing what this person actually did in that role (used downstream to match job descriptions).
+- Bullets remain strings in the "bullets" array (do not change bullet shape — downstream code expects strings).`;
 
         // Check if client sent rendered PDF page images for vision-based parsing
         let pageImages = [];
@@ -1467,26 +1472,39 @@ app.post('/api/builder/enhance-resume', requireBuilderAuth, checkBuilderQuota, e
         const apiKey = await getOpenAIKey(req);
         if (!apiKey) return res.status(500).json({ error: 'AI service temporarily unavailable. Please try again later.' });
 
-        const systemPrompt = `You are a professional resume writer and ATS optimization expert. Enhance the provided resume content to better target the specified role. 
+        const systemPrompt = `You are a senior executive resume writer. Improve wording at the bullet / summary / skills level to maximize hiring-manager impact WITHOUT inventing facts. Return a DIFF-based JSON designed for an Accept/Reject UI — each change is granular, reversible, and includes a rationale.
 
-Guidelines:
-- Reword experience bullets to incorporate relevant keywords from the job description
-- Make bullets achievement-oriented with quantified results where possible (use realistic metrics if not provided)
-- Enhance the professional summary to align with the target role
-- Reorder and augment skills to prioritize those matching the job description
-- Maintain truthfulness — enhance wording, don't fabricate experience
-- Keep bullets concise (1-2 lines each)
-- Use strong action verbs to start each bullet
+HARD RULES (violations invalidate the response):
+1. NEVER invent specific numbers, dates, companies, titles, team sizes, budgets, or outcomes that aren't present or clearly implied in the source bullet. If a metric is plausible but unknown, use a placeholder token like [X%], [$Xm], [N-person team], [Y hrs/wk]. Placeholders MUST use square brackets.
+2. Preserve truth. You may re-phrase, strengthen verbs, front-load impact, and add job-description keywords — you may NOT change the who/what/when of an accomplishment.
+3. Every improved bullet must target: strong action verb + quantified impact (real or placeholder) + business context + JD keyword (only when truthful).
+4. If a bullet is already strong (verb + metric + context), OMIT it from experience_diffs — do not change it.
+5. If no JD is provided, still improve phrasing & quantification, but leave keywords_added as an empty array.
 
-Return ONLY valid JSON (no markdown fences) with this structure:
+Return ONLY valid JSON (no markdown fences) with this exact structure:
 {
-  "experience": [{"company":"Same Company","title":"Same Title","dates":"Same Dates","location":"Same Location","bullets":["Enhanced bullet 1","Enhanced bullet 2"]}],
-  "skills": ["Prioritized Skill 1","Skill 2"],
-  "summary": "Enhanced professional summary targeting the role"
-}`;
+  "summary_diff": null,
+  "experience_diffs": [
+    {"experience_index":0,"bullet_index":2,"company":"optional","original":"...","improved":"...","reason":"1-sentence rationale","keywords_added":["..."],"metric_added":true,"placeholder_metrics":["[X%]"]}
+  ],
+  "skills_reordered": ["top-matching JD skill first", "..."],
+  "skills_added": ["only skills clearly implied by existing bullets — never fabricate"],
+  "removed_suggestions": [{"field_path":"experience[1].bullets[4]","reason":"duplicate of bullet 2"}],
+  "notes": "1-2 sentences of strategist commentary for the UI",
+  "experience": [{"company":"Same Company","title":"Same Title","dates":"Same Dates","location":"Same Location","bullets":["Final bullet 1 with diffs applied","Final bullet 2"]}],
+  "skills": ["Final ordered skill 1","..."],
+  "summary": "Final summary string"
+}
+
+Notes:
+- summary_diff is null if no change; otherwise {original, improved, reason, keywords_added, placeholder_metrics}.
+- The trailing experience / skills / summary fields are the FINAL post-diff output for backward compatibility. They MUST be internally consistent with the diffs above.`;
 
         const userPrompt = `Target Role: ${job_title || 'Not specified'}
 Job Description: ${job_description || 'Not provided'}
+
+Prior Analysis (prioritize rewriting weak_bullets & adding missing_keywords from here, if present):
+${req.body && req.body.prior_analysis ? JSON.stringify(req.body.prior_analysis).slice(0, 6000) : 'none'}
 
 Resume Content to Enhance:
 ${JSON.stringify({ experience, skills, summary }, null, 2)}`;
@@ -1502,6 +1520,227 @@ ${JSON.stringify({ experience, skills, summary }, null, 2)}`;
         res.json({ enhanced_data: enhancedData });
     } catch (err) {
         console.error('[Builder] enhance-resume error:', err.message);
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// ============================================================
+// POST /api/builder/analyze-resume  (Decision-grade hiring-manager analysis v2)
+// ============================================================
+app.post('/api/builder/analyze-resume', requireBuilderAuth, checkBuilderQuota, express.json(), async (req, res) => {
+    try {
+        const { resume_text, resume_data, job_description, job_title, company } = req.body || {};
+        let resumeText = (resume_text || '').toString();
+        if (!resumeText && resume_data) {
+            const r = resume_data;
+            const expLines = (r.experience || []).map(e => `${e.title || ''} at ${e.company || ''} (${e.dates || ''})\n${(e.bullets || []).map(b => (typeof b === 'string' ? b : (b.text || ''))).join('\n')}`);
+            resumeText = [r.name, r.current_title, r.summary, ...expLines, 'Skills: ' + ((r.skills || []).join(', ')), ...((r.education || []).map(e => `${e.degree || ''} - ${e.school || ''} ${e.year || ''}`))].filter(Boolean).join('\n\n');
+        }
+        if (!resumeText || resumeText.trim().length < 100) {
+            return res.status(400).json({ error: 'Resume content missing or too short' });
+        }
+
+        const apiKey = await getOpenAIKey(req);
+        if (!apiKey) return res.status(500).json({ error: 'AI service temporarily unavailable. Please try again later.' });
+
+        const systemPrompt = `You are a senior hiring manager and technical recruiter who has reviewed 10,000+ resumes. You are blunt, specific, and evidence-based. You judge this resume the way a recruiter does in the first 10 seconds, then the way a hiring manager does in a 5-minute review. Never give generic advice; every comment must cite concrete text from the resume or concrete gaps vs the job description.
+
+Output STRICT JSON matching the schema below. No markdown fences. No prose outside JSON. Every numeric score is an integer 0-100.
+
+SCORING RUBRIC (calibrate overall_score):
+- 90-100: Top 5% candidate. JD keywords >=85% present, every experience bullet quantified, zero structural issues, clear story arc.
+- 75-89: Strong. >=70% keyword match, most bullets quantified, minor gaps only.
+- 60-74: Average. Generic phrasing, <50% quantified bullets, multiple missing keywords.
+- 45-59: Below average. Weak verbs, no metrics, ATS-unfriendly.
+- 0-44: Not viable for this role.
+Do NOT default to 75. Without a job description, cap overall_score at 70 unless the resume is genuinely exceptional.
+
+DECISION RULE: PASS = would advance to phone screen. BORDERLINE = would advance only if pipeline is thin. REJECT = would not advance.
+
+COMPETITIVE BENCHMARK: top_candidate_would_say = 3-5 specific bullet examples a top-10% candidate for this JD would have on their resume. why_this_candidate_loses = 3-5 specific reasons THIS resume loses to that top candidate (cite evidence).
+
+BULLET GRADING: For experience bullets, classify strong/weak. A bullet is STRONG only if it has (a) strong action verb, (b) quantified result (%, $, #, time), AND (c) clear business context. Provide at least 3 rewrites that preserve truth but add impact \u2014 use [placeholder] tokens like [X%], [$Xm], [N-person team] where a metric is plausible but unknown. NEVER invent specific numbers.
+
+90-DAY PLAN CREDIBILITY: Given the resume's evidence, score 0-100 how credibly this candidate could execute a 90-day plan for the target role. List gaps (skills/evidence missing) that would undermine credibility in week-1 conversations with the hiring manager.
+
+ATS SIMULATION: ats.passes = true only if (format parseable + >=70% keyword match + no graphic-only text + standard section headings). List missing_keywords from the JD, case-normalized, deduped.
+
+Return JSON with exactly this shape:
+{
+  "overall_score": 0,
+  "decision": "PASS|BORDERLINE|REJECT",
+  "recruiter_first_impression": "10-second verdict, 1-2 sentences, brutally honest",
+  "ten_second_reject_reasons": ["specific reason citing resume text","..."],
+  "overall_summary": "2-3 sentence hiring-manager assessment citing specific resume content",
+  "score_breakdown": [
+    {"category":"Job Alignment","score":0,"weight":25,"reason":"cite evidence"},
+    {"category":"Quantified Impact","score":0,"weight":25,"reason":"..."},
+    {"category":"Bullet Strength","score":0,"weight":15,"reason":"..."},
+    {"category":"ATS Compatibility","score":0,"weight":15,"reason":"..."},
+    {"category":"Structure & Clarity","score":0,"weight":10,"reason":"..."},
+    {"category":"90-Day Credibility","score":0,"weight":10,"reason":"..."}
+  ],
+  "job_alignment": {"alignment_score":0,"top_requirements":[{"requirement":"from JD","importance":"High","match_score":0,"gap":"specific"}]},
+  "bullet_strength": {
+    "score":0,
+    "strong_bullets":[{"text":"...","company":"...","why":"..."}],
+    "weak_bullets":[{"text":"...","company":"...","why":"..."}],
+    "rewrites":[{"field_path":"experience[0].bullets[2]","original":"...","improved":"... with [X%] impact","reason":"...","keywords_added":["..."],"metric_added":true}]
+  },
+  "quantification": {"score":0,"missing_metrics":["..."],"suggested_metrics":["..."]},
+  "competitive_analysis": {"top_candidate_would_say":["..."],"why_this_candidate_loses":["..."]},
+  "ats": {"score":0,"passes":true,"issues":["..."],"missing_keywords":["..."]},
+  "ninety_day_plan_alignment": {"credibility_score":0,"gaps":["..."],"supporting_evidence":["..."]},
+  "sections": [{"name":"Experience","status":"good|warning|critical","feedback":"...","improvements":["..."]}],
+  "strengths": ["cite specific resume content"],
+  "weaknesses": ["cite specific resume content"],
+  "top_5_fixes": ["ordered by impact \u2014 each fix names the exact bullet/section and the change to make"],
+  "star_stories": [{"question":"...","situation":"...","task":"...","action":"...","result":"...","sample_answer":"..."}],
+  "missing_keywords": ["..."],
+  "recommendations": ["..."],
+  "ats_analysis": {"score":0,"feedback":"mirrors ats for UI backward-compat","issues":["..."]}
+}
+
+Rules:
+- Cite exact phrases from the resume in feedback where possible.
+- If no JD, set job_alignment.alignment_score to null and leave missing_keywords = [].
+- Minimum 4 star_stories.
+- No placeholder prose like "consider adding metrics" \u2014 always name the exact bullet and exact metric type.
+- ats_analysis is a mirror of ats for legacy UI consumers \u2014 keep both in sync.`;
+
+        const jd = (job_description || '').toString().trim();
+        const userPrompt = `Target Title: ${job_title || 'Not specified'}
+Target Company: ${company || 'Not specified'}
+Job Description:
+${jd || 'Not provided'}
+
+Resume:
+${resumeText}`;
+
+        const result = await callOpenAI(apiKey, systemPrompt, userPrompt, 'gpt-4o', 6000, true, 0.2);
+        const analysis = extractJSON(result);
+        if (!analysis) {
+            console.error('[Builder] analyze-resume: unparseable AI response:', result.slice(0, 500));
+            return res.status(500).json({ error: 'Failed to parse AI analysis response' });
+        }
+        // Backward-compat: ensure ats_analysis mirrors ats
+        if (analysis.ats && !analysis.ats_analysis) {
+            analysis.ats_analysis = { score: analysis.ats.score, feedback: (analysis.ats.issues || []).join(' '), issues: analysis.ats.issues || [] };
+        }
+        await deductAIUseServer(req);
+        res.json({ success: true, analysis });
+    } catch (err) {
+        console.error('[Builder] analyze-resume error:', err.message);
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// ============================================================
+// POST /api/builder/rescore  (cheap gpt-4o-mini delta after accept/reject)
+// ============================================================
+app.post('/api/builder/rescore', requireBuilderAuth, checkBuilderQuota, express.json(), async (req, res) => {
+    try {
+        const { resume_data, job_description, job_title, prior_analysis, accepted_changes } = req.body || {};
+        if (!resume_data) return res.status(400).json({ error: 'resume_data is required' });
+
+        const apiKey = await getOpenAIKey(req);
+        if (!apiKey) return res.status(500).json({ error: 'AI service temporarily unavailable. Please try again later.' });
+
+        const systemPrompt = `You are scoring a resume after the candidate accepted a subset of AI suggestions. Input: prior analysis + the modified resume + which changes were accepted. Output a DELTA only \u2014 do not redo the full analysis. Return strict JSON:
+{
+  "new_overall_score": 0,
+  "new_score_breakdown": [{"category":"Job Alignment","score":0,"reason":"what changed"}],
+  "projected_score_lift": {"before":0,"after":0,"reason":"1 sentence"},
+  "still_missing": ["top 3 remaining gaps after changes"]
+}
+Rules:
+- Base new_overall_score on evidence in the UPDATED resume. Integer 0-100.
+- If accepted_changes is empty, return the prior score unchanged and set projected_score_lift.reason = "no changes accepted".
+- Do NOT invent new data.`;
+
+        const userPrompt = `Prior Analysis:
+${JSON.stringify(prior_analysis || {}).slice(0, 6000)}
+
+Accepted Changes:
+${JSON.stringify(accepted_changes || []).slice(0, 3000)}
+
+Updated Resume (JSON):
+${JSON.stringify(resume_data).slice(0, 8000)}
+
+Target Title: ${job_title || 'Not specified'}
+Job Description:
+${(job_description || 'Not provided').toString().slice(0, 3000)}`;
+
+        const result = await callOpenAI(apiKey, systemPrompt, userPrompt, 'gpt-4o-mini', 1500, true, 0.2);
+        const delta = extractJSON(result);
+        if (!delta) return res.status(500).json({ error: 'Failed to parse rescore response' });
+        await deductAIUseServer(req);
+        res.json({ success: true, delta });
+    } catch (err) {
+        console.error('[Builder] rescore error:', err.message);
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// ============================================================
+// POST /api/builder/tailor-to-jd  (Full JD-targeted tailoring with keyword mapping)
+// ============================================================
+app.post('/api/builder/tailor-to-jd', requireBuilderAuth, checkBuilderQuota, express.json(), async (req, res) => {
+    try {
+        const { resume_data, job_description, job_title, company, prior_analysis } = req.body || {};
+        if (!resume_data) return res.status(400).json({ error: 'resume_data is required' });
+        if (!job_description || !job_description.toString().trim()) return res.status(400).json({ error: 'job_description is required for tailoring' });
+
+        const apiKey = await getOpenAIKey(req);
+        if (!apiKey) return res.status(500).json({ error: 'AI service temporarily unavailable. Please try again later.' });
+
+        const systemPrompt = `You are a job-application strategist. Given a resume and a target job posting, produce a tailored version optimized for THIS specific role while staying truthful. Output a DIFF-based JSON (same shape as enhance-resume) plus keyword_mapping and unrecoverable_gaps.
+
+Process (internal reasoning you follow silently):
+1. Extract the JD's top 10 requirements and rank by importance (High/Medium/Low).
+2. For each requirement, find the closest resume evidence. If missing, flag as unrecoverable_gap \u2014 DO NOT fabricate.
+3. Rewrite 3-8 bullets to surface matching evidence with JD language.
+4. Re-order skills so top JD keywords appear first.
+5. Rewrite summary to lead with the strongest match.
+
+HARD RULES:
+- NEVER invent specific numbers, titles, companies, or team sizes. Use [placeholder] tokens like [X%], [$Xm], [N-person team].
+- Preserve the who/what/when of every bullet.
+- If a bullet is already strong AND already surfaces a top requirement, omit from experience_diffs.
+
+Return ONLY valid JSON:
+{
+  "summary_diff": null,
+  "experience_diffs": [{"experience_index":0,"bullet_index":2,"original":"...","improved":"...","reason":"...","keywords_added":["..."],"metric_added":true,"placeholder_metrics":["[X%]"]}],
+  "skills_reordered": ["..."],
+  "skills_added": ["..."],
+  "keyword_mapping": [{"jd_requirement":"...","importance":"High","covered_by":"experience[0].bullets[1]","coverage":"full|partial|none"}],
+  "unrecoverable_gaps": ["requirement X has no supporting evidence"],
+  "projected_score_lift": {"before":0,"after":0,"reason":"1 sentence"},
+  "notes": "1-2 sentences for the UI",
+  "experience": [{"company":"...","title":"...","dates":"...","location":"...","bullets":["Final bullet 1","..."]}],
+  "skills": ["Final ordered skill 1","..."],
+  "summary": "Final tailored summary"
+}`;
+
+        const userPrompt = `Target Title: ${job_title || 'Not specified'}
+Target Company: ${company || 'Not specified'}
+Job Description:
+${job_description}
+
+Prior Analysis (if present, use weak_bullets & missing_keywords as priority targets):
+${prior_analysis ? JSON.stringify(prior_analysis).slice(0, 6000) : 'none'}
+
+Current Resume (JSON):
+${JSON.stringify(resume_data).slice(0, 10000)}`;
+
+        const result = await callOpenAI(apiKey, systemPrompt, userPrompt, 'gpt-4o', 5000, true, 0.3);
+        const tailored = extractJSON(result);
+        if (!tailored) return res.status(500).json({ error: 'Failed to parse tailoring response' });
+        await deductAIUseServer(req);
+        res.json({ success: true, tailored });
+    } catch (err) {
+        console.error('[Builder] tailor-to-jd error:', err.message);
         res.status(500).json({ error: err.message });
     }
 });
