@@ -1636,6 +1636,206 @@ ${resumeText}`;
 });
 
 // ============================================================
+// POST /api/builder/optimize  (ONE-SHOT guided flow: analyze -> enhance -> gate)
+// Primary endpoint powering the "Optimize for this Job" CTA.
+// Returns: original_score, improved_score, accepted_changes[], discarded_changes[], analysis
+// ============================================================
+app.post('/api/builder/optimize', requireBuilderAuth, checkBuilderQuota, express.json(), async (req, res) => {
+    try {
+        const { resume_data, job_description, job_title, company } = req.body || {};
+        if (!resume_data) return res.status(400).json({ error: 'resume_data is required' });
+        if (!job_description || !job_description.toString().trim() || job_description.trim().length < 30) {
+            return res.status(400).json({ error: 'A job description (30+ characters) is required to optimize for a specific role' });
+        }
+
+        const apiKey = await getOpenAIKey(req);
+        if (!apiKey) return res.status(500).json({ error: 'AI service temporarily unavailable. Please try again later.' });
+
+        // Build a readable resume text for the model
+        const r = resume_data;
+        const expLines = (r.experience || []).map((e, i) => `EXP[${i}] ${e.title || ''} at ${e.company || ''} (${e.dates || ''})\n${(e.bullets || []).map((b, j) => `  [${j}] ${typeof b === 'string' ? b : (b.text || '')}`).join('\n')}`);
+        const resumeText = [r.name, r.current_title, r.summary ? 'SUMMARY: ' + r.summary : '', ...expLines, 'SKILLS: ' + ((r.skills || []).join(', ')), ...((r.education || []).map(e => `EDU: ${e.degree || ''} - ${e.school || ''} ${e.year || ''}`))].filter(Boolean).join('\n\n');
+
+        const systemPrompt = `You are a senior hiring manager and executive resume writer. In ONE pass, you will (a) score the resume against the target job, (b) identify every WEAK bullet, (c) rewrite ONLY the weak ones, and (d) estimate the point delta each rewrite contributes. Your output powers a product that AUTO-APPLIES only the changes that improve the score \u2014 so your per-change delta_score must be honest and conservative.
+
+STRONG bullet (DO NOT rewrite \u2014 omit from candidate_changes):
+- Starts with a strong action verb (Led, Drove, Built, Launched, Cut, Grew, Negotiated, Architected, Shipped, Owned, Scaled)
+- Contains a quantified result (%, $, count, time saved, scale) OR names a specific system/tool/methodology
+- Describes ownership or business outcome (not just a task)
+- Length roughly 15-35 words
+
+WEAK bullet (eligible for rewrite):
+- Starts with "responsible for", "helped", "worked on", "assisted", "involved in", "duties included"
+- Contains zero metrics AND zero named systems/tools
+- Describes tasks, not outcomes
+- Missing keywords that the JD emphasizes
+
+HARD RULES (violations invalidate your response):
+1. NEVER rewrite a STRONG bullet. Return it unchanged by omitting it from candidate_changes.
+2. NEVER invent specific numbers, dates, companies, titles, team sizes, budgets. If a metric is plausible but unknown, use square-bracket tokens: [X%], [$Xm], [N-person team], [Y hrs/wk].
+3. NEVER remove an existing quantified number or named system/tool from the original. (If the original says "35%", the improved bullet must keep "35%".)
+4. Every rewrite MUST measurably improve at least one of: Job Alignment, Quantified Impact, Bullet Strength. State which in \`affected_categories\`.
+5. Cap: rewrite AT MOST 60% of bullets. If more than 60% are weak, rewrite only the weakest 60%.
+6. For skills: reorder to put JD keywords first; add missing JD keywords ONLY if they are legitimately supported by experience bullets or education.
+7. Summary: rewrite only if it's generic or misses the JD focus. Preserve any specific claims.
+8. delta_score is an HONEST integer from -10 to +10 estimating how much the FULL overall_score would change if this single change were applied. Do not inflate. It's fine for most changes to be +1 to +3.
+
+SCORING RUBRIC for overall_score (match analyzer v2):
+- 90-100: Top 5%. >=85% JD keywords, every bullet quantified, clear story arc.
+- 75-89: Strong. >=70% keyword match, most bullets quantified.
+- 60-74: Average. Generic phrasing, <50% quantified.
+- 45-59: Below average. Weak verbs, no metrics.
+- 0-44: Not viable.
+Cap at 70 if the resume is missing most JD keywords even after proposed rewrites.
+
+DECISION: PASS = advance to phone screen. BORDERLINE = advance only if pipeline is thin. REJECT = don't advance.
+
+Return STRICT JSON (no markdown fences) with this exact shape:
+{
+  "original_score": 0,
+  "decision": "PASS|BORDERLINE|REJECT",
+  "recruiter_first_impression": "1-2 sentences",
+  "candidate_changes": [
+    {
+      "change_id": "c1",
+      "field_path": "experience[0].bullets[2]",
+      "experience_index": 0,
+      "bullet_index": 2,
+      "section": "experience|summary|skills",
+      "original": "",
+      "improved": "",
+      "reason": "short why this is better",
+      "keywords_added": [],
+      "metric_added": true,
+      "placeholders": [],
+      "affected_categories": ["Job Alignment","Bullet Strength"],
+      "delta_score": 2
+    }
+  ],
+  "summary_change": null,
+  "skills_reordered": [],
+  "skills_added": [],
+  "analysis": {
+    "overall_score": 0,
+    "job_alignment_score": 0,
+    "quantification_score": 0,
+    "bullet_strength_score": 0,
+    "ats_score": 0,
+    "missing_keywords": [],
+    "weak_bullets_count": 0,
+    "strong_bullets_count": 0,
+    "top_5_fixes": [],
+    "competitive_gaps": []
+  },
+  "strategist_note": "2 sentences summarizing what you changed and why"
+}
+
+Set summary_change to null if summary is already strong; otherwise {"original":"","improved":"","reason":"","keywords_added":[],"placeholders":[],"delta_score":0,"affected_categories":[]}. skills_reordered should be the final ordered skills list (always return it even if unchanged). skills_added should contain only skills truthfully supported by the resume.`;
+
+        const userPrompt = `Target Role: ${job_title || 'Not specified'}
+Target Company: ${company || 'Not specified'}
+
+Job Description:
+${job_description.toString().slice(0, 5000)}
+
+Current Resume (structured):
+${JSON.stringify(resume_data).slice(0, 10000)}
+
+Current Resume (readable):
+${resumeText.slice(0, 6000)}`;
+
+        const result = await callOpenAI(apiKey, systemPrompt, userPrompt, 'gpt-4o', 5500, true, 0.2);
+        const out = extractJSON(result);
+        if (!out || !Array.isArray(out.candidate_changes)) {
+            console.error('[Builder] optimize: unparseable AI response:', (result || '').slice(0, 500));
+            return res.status(500).json({ error: 'Failed to parse optimize response' });
+        }
+
+        // ── LOCAL GATE: only accept changes that (a) have delta_score > 0 and (b) don't strip existing metrics ──
+        const accepted = [];
+        const discarded = [];
+        const METRIC_RE = /(\d+(?:\.\d+)?\s*(?:%|percent|k\b|M\b|B\b)|\$\s?\d[\d,.]*|\b\d+x\b|\b\d+[\s-]?(?:hrs?|hours?|days?|weeks?|months?|years?)\b|\b\d{2,}\b)/i;
+        const stripsMetric = (orig, impr) => {
+            if (!orig || !impr) return false;
+            const m = orig.match(METRIC_RE);
+            if (!m) return false;
+            // If original had a metric but improved doesn't contain it verbatim and doesn't introduce a new one, reject
+            if (impr.includes(m[0])) return false;
+            // allow if the improved has its own metric (real or placeholder)
+            if (METRIC_RE.test(impr) || /\[[^\]]+\]/.test(impr)) return false;
+            return true;
+        };
+
+        (out.candidate_changes || []).forEach((c, i) => {
+            if (!c.change_id) c.change_id = 'c' + (i + 1);
+            const delta = Number.isFinite(c.delta_score) ? c.delta_score : 0;
+            if (delta <= 0) {
+                discarded.push({ ...c, reason_discarded: delta === 0 ? 'No measurable score improvement' : 'Would lower overall score' });
+                return;
+            }
+            if (stripsMetric(c.original, c.improved)) {
+                discarded.push({ ...c, reason_discarded: 'Would remove an existing quantified metric' });
+                return;
+            }
+            accepted.push(c);
+        });
+
+        // Summary change gated the same way
+        let acceptedSummaryChange = null;
+        if (out.summary_change && out.summary_change.improved) {
+            const sd = Number.isFinite(out.summary_change.delta_score) ? out.summary_change.delta_score : 0;
+            if (sd > 0 && !stripsMetric(out.summary_change.original, out.summary_change.improved)) {
+                acceptedSummaryChange = { ...out.summary_change, change_id: 'summary', section: 'summary' };
+            } else if (out.summary_change.improved) {
+                discarded.push({ ...out.summary_change, change_id: 'summary', section: 'summary', reason_discarded: sd <= 0 ? 'No measurable score improvement' : 'Would strip existing specifics' });
+            }
+        }
+
+        const original_score = Math.max(0, Math.min(100, Number(out.original_score) || 0));
+        const rawLift = accepted.reduce((s, c) => s + (Number(c.delta_score) || 0), 0) + (acceptedSummaryChange ? (Number(acceptedSummaryChange.delta_score) || 0) : 0);
+        const improved_score = Math.max(0, Math.min(100, original_score + rawLift));
+        const delta = improved_score - original_score;
+
+        const summary_stats = {
+            bullets_improved: accepted.filter(c => c.section === 'experience' || /experience\[/i.test(c.field_path || '')).length,
+            summary_rewritten: !!acceptedSummaryChange,
+            skills_reordered: !!(out.skills_reordered && out.skills_reordered.length),
+            skills_added_count: (out.skills_added || []).length,
+            keywords_added: Array.from(new Set([
+                ...accepted.flatMap(c => c.keywords_added || []),
+                ...(acceptedSummaryChange ? (acceptedSummaryChange.keywords_added || []) : [])
+            ])).length,
+            metrics_added: accepted.filter(c => c.metric_added).length + (acceptedSummaryChange && acceptedSummaryChange.metric_added ? 1 : 0),
+            placeholders_inserted: accepted.reduce((s, c) => s + ((c.placeholders || []).length), 0),
+            changes_proposed: (out.candidate_changes || []).length + (out.summary_change ? 1 : 0),
+            changes_kept: accepted.length + (acceptedSummaryChange ? 1 : 0),
+            changes_skipped: discarded.length
+        };
+
+        await deductAIUseServer(req);
+        res.json({
+            success: true,
+            original_score,
+            improved_score,
+            delta,
+            decision: out.decision || 'BORDERLINE',
+            recruiter_first_impression: out.recruiter_first_impression || '',
+            accepted_changes: accepted,
+            accepted_summary_change: acceptedSummaryChange,
+            discarded_changes: discarded,
+            skills_reordered: out.skills_reordered || [],
+            skills_added: out.skills_added || [],
+            summary_stats,
+            analysis: out.analysis || {},
+            strategist_note: out.strategist_note || ''
+        });
+    } catch (err) {
+        console.error('[Builder] optimize error:', err.message);
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// ============================================================
 // POST /api/builder/rescore  (cheap gpt-4o-mini delta after accept/reject)
 // ============================================================
 app.post('/api/builder/rescore', requireBuilderAuth, checkBuilderQuota, express.json(), async (req, res) => {
