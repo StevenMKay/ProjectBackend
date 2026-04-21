@@ -959,6 +959,20 @@ app.post('/api/builder/checkout', async (req, res) => {
             payment_method_types: ['card'],
             customer_email: email,
             line_items: [{ price: priceId, quantity: 1 }],
+            // 7-day free trial advertised on the paywall. Without this, Stripe
+            // charges the first invoice immediately on checkout.
+            subscription_data: {
+                trial_period_days: 7,
+                trial_settings: {
+                    end_behavior: { missing_payment_method: 'cancel' }
+                },
+                metadata: {
+                    product: 'resume-builder',
+                    email: email.toLowerCase()
+                }
+            },
+            // Collect a payment method during the trial so we can bill at trial end.
+            payment_method_collection: 'always',
             metadata: {
                 product: 'resume-builder',
                 email: email.toLowerCase()
