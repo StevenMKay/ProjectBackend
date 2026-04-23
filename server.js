@@ -915,23 +915,70 @@ app.post('/api/billing/webhook',
             }
         }
 
-        // Resume Builder subscription activation
+        // Resume Builder subscription + lifetime activation (Payment Link compatible)
         if (event.type === 'checkout.session.completed') {
-            const session2 = event.data.object;
-            if (session2.metadata && session2.metadata.product === 'resume-builder') {
-                const email = (session2.metadata.email || session2.customer_email || '').toLowerCase();
+            const s = event.data.object;
+
+            // Detect product/plan from session metadata (legacy /api/builder/checkout),
+            // else look up the line-item's Price/Product metadata (Stripe Payment Links).
+            let productTag = (s.metadata && s.metadata.product) || '';
+            let planTag    = (s.metadata && s.metadata.plan) || '';
+            try {
+                if (!productTag || !planTag) {
+                    const expanded = await stripe.checkout.sessions.listLineItems(s.id, { limit: 5, expand: ['data.price.product'] });
+                    const li = (expanded.data || [])[0];
+                    if (li) {
+                        if (!productTag) productTag = (li.price && li.price.product && li.price.product.metadata && li.price.product.metadata.product) || '';
+                        if (!planTag)    planTag    = (li.price && li.price.metadata && li.price.metadata.plan) || '';
+                    }
+                }
+            } catch (e) { console.warn('[Billing] line-item lookup failed:', e.message); }
+
+            const isResumeBuilder = productTag === 'resume-builder' || planTag === 'monthly' || planTag === 'lifetime';
+
+            if (isResumeBuilder) {
+                const email = ((s.customer_details && s.customer_details.email) || s.customer_email || (s.metadata && s.metadata.email) || '').toLowerCase();
                 if (email) {
                     try {
-                        await db.collection('builderSubscriptions').doc(email).set({
-                            active: true,
-                            stripeCustomerId: session2.customer,
-                            stripeSubscriptionId: session2.subscription,
-                            email,
-                            createdAt: new Date().toISOString()
-                        });
-                        console.log('[Billing] Resume Builder subscription activated for', email);
+                        if (s.mode === 'subscription' || planTag === 'monthly') {
+                            // Monthly subscription path
+                            await db.collection('builderSubscriptions').doc(email).set({
+                                active: true,
+                                lifetime: false,
+                                stripeCustomerId: s.customer,
+                                stripeSubscriptionId: s.subscription,
+                                email,
+                                createdAt: new Date().toISOString()
+                            }, { merge: true });
+                            console.log('[Billing] Monthly subscription activated for', email);
+                        } else if (s.mode === 'payment' || planTag === 'lifetime') {
+                            // Lifetime one-time purchase path
+                            await db.collection('builderSubscriptions').doc(email).set({
+                                active: true,
+                                lifetime: true,
+                                lifetimePurchasedAt: new Date().toISOString(),
+                                stripeCustomerId: s.customer,
+                                lifetimeSessionId: s.id,
+                                email,
+                                createdAt: new Date().toISOString()
+                            }, { merge: true });
+                            console.log('[Billing] LIFETIME activated for', email);
+
+                            // Auto-cancel any active/trialing monthly so they aren't double-charged.
+                            if (s.customer) {
+                                for (const status of ['active', 'trialing']) {
+                                    try {
+                                        const subs = await stripe.subscriptions.list({ customer: s.customer, status, limit: 5 });
+                                        for (const sub of subs.data) {
+                                            await stripe.subscriptions.cancel(sub.id, { prorate: true });
+                                            console.log('[Billing] Auto-cancelled', status, sub.id, 'after lifetime purchase for', email);
+                                        }
+                                    } catch (e) { console.error('[Billing] Auto-cancel (' + status + ') failed:', e.message); }
+                                }
+                            }
+                        }
                     } catch (err) {
-                        console.error('[Billing] Builder sub activation error for', email, err.message);
+                        console.error('[Billing] Resume Builder activation error for', email, err.message);
                     }
                 }
             }
@@ -996,7 +1043,9 @@ app.get('/api/builder/check-subscription', async (req, res) => {
         const doc = await db.collection('builderSubscriptions').doc(email).get();
         if (doc.exists && doc.data().active) {
             const d = doc.data();
-            const result = { subscribed: true };
+            const result = { subscribed: true, lifetime: d.lifetime === true };
+            // Lifetime users: no subscription to check — return immediately.
+            if (d.lifetime === true) return res.json(result);
             // For Stripe subs, do a live check for cancellation status
             if (stripe && d.stripeSubscriptionId) {
                 try {
@@ -1109,6 +1158,75 @@ app.post('/api/builder/portal', async (req, res) => {
     }
 });
 
+// Confirm lifetime purchase (safety net — the webhook is the source of truth,
+// but the frontend calls this on return from the Payment Link so the UI lights
+// up immediately even if the webhook is slightly delayed).
+app.post('/api/builder/confirm-lifetime', async (req, res) => {
+    try {
+        if (!stripe) return res.status(503).json({ error: 'Billing not configured' });
+        if (!db)     return res.status(503).json({ error: 'Database not configured' });
+        const email = (req.body.email || '').toLowerCase().trim();
+        if (!email) return res.status(400).json({ error: 'Email required' });
+
+        // If Firestore already shows lifetime, we're done.
+        const existing = await db.collection('builderSubscriptions').doc(email).get();
+        if (existing.exists && existing.data().lifetime === true && existing.data().active === true) {
+            return res.json({ ok: true, lifetime: true, source: 'firestore' });
+        }
+
+        // Look up the Stripe customer by email and scan recent Checkout Sessions
+        // for a paid one-time payment (mode === 'payment').
+        const customers = await stripe.customers.list({ email, limit: 3 });
+        let lifetimeFound = false;
+        let stripeCustomerId = null;
+        let lifetimeSessionId = null;
+        for (const c of customers.data) {
+            stripeCustomerId = c.id;
+            const sessions = await stripe.checkout.sessions.list({ customer: c.id, limit: 10 });
+            for (const sess of sessions.data) {
+                if (sess.mode === 'payment' && sess.payment_status === 'paid') {
+                    lifetimeFound = true;
+                    lifetimeSessionId = sess.id;
+                    break;
+                }
+            }
+            if (lifetimeFound) break;
+        }
+
+        if (!lifetimeFound) {
+            return res.json({ ok: true, lifetime: false });
+        }
+
+        await db.collection('builderSubscriptions').doc(email).set({
+            active: true,
+            lifetime: true,
+            lifetimePurchasedAt: new Date().toISOString(),
+            stripeCustomerId,
+            lifetimeSessionId,
+            email,
+            syncedAt: new Date().toISOString()
+        }, { merge: true });
+
+        // Auto-cancel any active/trialing monthly subs so they aren't double-charged.
+        if (stripeCustomerId) {
+            for (const status of ['active', 'trialing']) {
+                try {
+                    const subs = await stripe.subscriptions.list({ customer: stripeCustomerId, status, limit: 5 });
+                    for (const sub of subs.data) {
+                        try { await stripe.subscriptions.cancel(sub.id, { prorate: true }); }
+                        catch (e) { console.warn('[confirm-lifetime] cancel error:', e.message); }
+                    }
+                } catch (e) { console.warn('[confirm-lifetime] list (' + status + ') error:', e.message); }
+            }
+        }
+
+        res.json({ ok: true, lifetime: true, source: 'stripe' });
+    } catch (err) {
+        console.error('[Builder] confirm-lifetime error:', err.message);
+        res.status(500).json({ error: err.message });
+    }
+});
+
 // ============================================================
 // RESUME BUILDER API ROUTES
 // ============================================================
@@ -1169,8 +1287,14 @@ async function checkBuilderQuota(req, res, next) {
         const subDoc = req.userEmail
             ? await db.collection('builderSubscriptions').doc(req.userEmail).get()
             : null;
-        const isSubscriber = subDoc && subDoc.exists && subDoc.data().active === true;
+        const subData = subDoc && subDoc.exists ? subDoc.data() : null;
+        const isLifetime   = subData && subData.active === true && subData.lifetime === true;
+        const isSubscriber = subData && subData.active === true;
 
+        if (isLifetime) {
+            req.builderAccess = { tier: 'lifetime' };
+            return next();
+        }
         if (isSubscriber) {
             req.builderAccess = { tier: 'subscriber' };
             return next();
@@ -1223,8 +1347,8 @@ async function checkBuilderQuota(req, res, next) {
 async function deductAIUseServer(req) {
     if (!req.uid || !req.builderAccess) return;
     const { tier } = req.builderAccess;
-    // Owners and subscribers don't get deducted
-    if (tier === 'owner' || tier === 'subscriber') return;
+    // Owners, subscribers, and lifetime users don't get deducted
+    if (tier === 'owner' || tier === 'subscriber' || tier === 'lifetime') return;
     try {
         // Use Firestore increment to safely decrement (atomic operation)
         await db.collection('builderUsage').doc(req.uid).set({
