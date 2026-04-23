@@ -2282,7 +2282,7 @@ app.post('/api/builder/generate', requireBuilderAuth, checkBuilderQuota, express
 
         const systemPrompt = `You are an expert career coach and executive resume strategist. Generate a comprehensive, deeply detailed ${plan_type} career plan and resume content.${planContextNote}
 
-CRITICAL: The executive_summary, plan_phases, and ALL plan content must be written in FIRST PERSON voice from the candidate's perspective. Use "I", "my", "I will", "I bring" — NEVER refer to the candidate in the third person (do NOT write "The purpose of this plan is to align [Name] with..." or "[Name] brings..."). This is the candidate's own plan, presented in their own voice.
+CRITICAL: The plan_phases and ALL plan content must be written in FIRST PERSON voice from the candidate's perspective. Use "I", "my", "I will", "I bring" — NEVER refer to the candidate in the third person (do NOT write "The purpose of this plan is to align [Name] with..." or "[Name] brings..."). This is the candidate's own plan, presented in their own voice. NOTE: executive_summary is the ONE exception — it must be written in third person, recruiter-style (see spec below).
 
 CRITICAL: Identify key skills, qualifications, terminology, and keywords from the job description provided. Weave these keywords naturally throughout the plan phases, executive summary, success criteria, and skills to demonstrate direct alignment between the candidate's experience and the target role requirements. This keyword alignment is essential for the content to be compelling.
 
@@ -2294,9 +2294,9 @@ Return ONLY valid JSON (no markdown fences) with this EXACT structure:
     "subtitle": "Current title or tagline",
     "company": "Target Company",
     "plan_type": "${plan_type}",
-    "tagline": "A detailed 3-5 sentence professional tagline (at least 60 words). Describe the candidate's core expertise, years of relevant experience, specific domain strengths, quantified career highlights (e.g. managed $X portfolios, led X-person teams, delivered X% improvements), and their unique value proposition for this specific role. Reference key qualifications from the job description. This should read like a polished executive brief — substantive and specific, not generic."
+    "tagline": "A concise 1-2 sentence professional tagline (MAX 220 characters). Third person. Focus on role, years of experience, domain, and one quantified strength. No fluff, no 'I', no buzzword stacking."
   },
-  "executive_summary": "A detailed 3-4 paragraph executive summary written in FIRST PERSON. First paragraph: my strategic vision for the role and what I aim to accomplish. Second paragraph: my unique qualifications and how they align with the role. Third paragraph: the expected outcomes and measurable impact I will deliver. Fourth paragraph (if applicable): my forward-looking strategic direction. Make this substantive — at least 200 words.",
+  "executive_summary": "A PROFESSIONAL RESUME SUMMARY — not a narrative, mission statement, or career vision. STRICT RULES: (1) Maximum 3-5 sentences total. (2) Maximum 500 characters (HARD CAP — outputs over 500 chars are INVALID and will be rejected). (3) No fluff, no storytelling, no 'I aim to', no future goals. (4) Third person only — NO 'I', 'my', 'we'. (5) No buzzword stacking (avoid stacking: strategic, visionary, dynamic, results-driven). (6) Must sound like a real resume a recruiter scans in 5 seconds. STYLE: Direct, factual, concise. Prioritize metrics and scope over adjectives. STRUCTURE: Sentence 1 = current role + years experience + domain. Sentence 2 = key strengths / expertise (2-3 max). Sentence 3 = measurable impact or scope (team size, revenue, scale). Optional Sentence 4 = differentiator or specialty. EXAMPLE: 'Vice President with 10+ years of experience in credit risk and business operations within banking. Specializes in strategic planning, data-driven decision making, and cross-functional leadership. Led initiatives impacting 700+ employees and delivered measurable revenue growth. Known for building scalable governance and performance frameworks.'",
   "plan_phases": [
     {
       "phase": "PHASE 1",
@@ -2332,7 +2332,8 @@ IMPORTANT GUIDELINES:
 - For plan_phases: You MUST generate EXACTLY 3 phases for 90-day plans, 4 for 12-month, 4 for 2-year plans. Do NOT stop after Phase 1. Every phase must be fully detailed with all fields populated.
 - TIMEFRAME FORMAT: ${timeframeGuidance}
 - Each phase MUST have at least 5 detailed actions, 2+ tools, 5 milestones, and a substantial executive_value paragraph
-- The executive_summary must be at least 200 words and deeply reference the job requirements
+- The executive_summary MUST be ≤500 characters, 3-5 sentences, third person, recruiter-scannable (NOT a narrative). Any output over 500 characters is invalid. Do NOT write paragraphs. Do NOT use 'I' or 'my'. Do NOT stack buzzwords. Focus on role, years, domain, metrics, scope.
+- The hero.tagline MUST be ≤220 characters, 1-2 sentences, third person.
 - Experience: Preserve ALL jobs from the resume data. Do NOT drop, merge, or skip any positions. Include ALL original bullets for each job — reword them to emphasize alignment with the target role, but never reduce the bullet count.
 - Skills should include both the candidate's existing skills AND key skills from the job description
 - KPIs should have 6-8 specific metrics with realistic targets
@@ -2357,6 +2358,26 @@ Generate deeply detailed, rich content for each section. Match the depth and qua
             console.error('[Builder] generate: unparseable AI response:', result.slice(0, 500));
             return res.status(500).json({ error: 'Failed to parse AI response as JSON' });
         }
+
+        // Server-side safety caps. The LLM occasionally ignores length limits;
+        // enforce them here so exports never receive oversized content that
+        // breaks PPTX/DOCX pagination.
+        try {
+            const trimAtSentence = (str, maxLen) => {
+                if (!str || str.length <= maxLen) return str;
+                const cut = str.slice(0, maxLen);
+                const lastStop = Math.max(cut.lastIndexOf('. '), cut.lastIndexOf('! '), cut.lastIndexOf('? '));
+                return (lastStop > maxLen * 0.5 ? cut.slice(0, lastStop + 1) : cut).trim();
+            };
+            if (typeof generated.executive_summary === 'string' && generated.executive_summary.length > 500) {
+                console.warn('[Builder] executive_summary exceeded 500 chars (' + generated.executive_summary.length + ') — trimming');
+                generated.executive_summary = trimAtSentence(generated.executive_summary, 500);
+            }
+            if (generated.hero && typeof generated.hero.tagline === 'string' && generated.hero.tagline.length > 220) {
+                console.warn('[Builder] hero.tagline exceeded 220 chars (' + generated.hero.tagline.length + ') — trimming');
+                generated.hero.tagline = trimAtSentence(generated.hero.tagline, 220);
+            }
+        } catch (e) { console.warn('[Builder] summary cap trim failed:', e.message); }
 
         await deductAIUseServer(req);
         res.json({ generated });
