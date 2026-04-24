@@ -1,0 +1,7 @@
+# Keep the backend slim on Railway — skip anything the container doesn't need.
+node_modules
+.env
+.env.local
+serviceAccountKey.json
+*.log
+.DS_Store
