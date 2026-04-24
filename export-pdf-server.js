@@ -99,18 +99,17 @@ async function htmlToPdf(html, { paper } = {}) {
   // --disable-dev-shm-usage: /dev/shm is 64MB in Docker which is too small
   //                         for Chromium's IPC buffers.
   // --disable-gpu:          no GPU in the container, avoids a crash path.
-  // --no-zygote:            disables the zygote process which can OOM on
-  //                         low-memory hosts.
-  // --font-render-hinting=none: avoids a known font-subsystem crash when
-  //                         rendering Google Fonts inside headless.
+  //
+  // Deliberately NOT set:
+  //   --no-zygote: incompatible with Playwright's process manager and
+  //                causes `page.pdf` to crash mid-render.
+  //   --single-process: same issue.
   const browser = await chromium.launch({
     args: [
       '--no-sandbox',
       '--disable-setuid-sandbox',
       '--disable-dev-shm-usage',
-      '--disable-gpu',
-      '--no-zygote',
-      '--font-render-hinting=none'
+      '--disable-gpu'
     ]
   });
   let lastPageError = null;
