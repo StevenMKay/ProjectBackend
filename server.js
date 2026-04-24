@@ -68,7 +68,9 @@ app.use((req, res, next) => {
 app.use((req, res, next) => {
     // Skip JSON parsing for Stripe webhook — it needs the raw body for signature verification
     if (req.originalUrl === '/api/billing/webhook') return next();
-    express.json()(req, res, next);
+    // 3MB limit accommodates the server-side PDF route, which can POST
+    // ~1-2MB of fully-rendered resume HTML. Other routes stay well under.
+    express.json({ limit: '3mb' })(req, res, next);
 });
 app.use(express.urlencoded({ extended: false }));
 
@@ -3103,6 +3105,21 @@ app.get('/api/builder/youtube-callback', async (req, res) => {
     // Full route intentionally commented out.
 });
 */
+
+// ============================================================
+// SERVER-SIDE PDF EXPORT (Playwright)
+// ============================================================
+// Mounted with requireAuth so Firebase-authenticated users only. The
+// router itself defines POST /api/builder/export/pdf-server. Playwright
+// is a soft-dep: if it isn't installed, the route responds 501 with a
+// helpful message but the rest of the backend still boots.
+try {
+    const pdfServer = require('./export-pdf-server');
+    app.use(requireAuth, pdfServer.router);
+    console.log('[export-pdf-server] route mounted at POST /api/builder/export/pdf-server');
+} catch (e) {
+    console.warn('[export-pdf-server] not mounted:', e.message);
+}
 
 // ============================================================
 // START SERVER
