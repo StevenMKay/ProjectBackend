@@ -1907,39 +1907,108 @@ app.post('/api/builder/optimize', requireBuilderAuth, checkBuilderQuota, express
         const expLines = (r.experience || []).map((e, i) => `EXP[${i}] ${e.title || ''} at ${e.company || ''} (${e.dates || ''})\n${(e.bullets || []).map((b, j) => `  [${j}] ${typeof b === 'string' ? b : (b.text || '')}`).join('\n')}`);
         const resumeText = [r.name, r.current_title, r.summary ? 'SUMMARY: ' + r.summary : '', ...expLines, 'SKILLS: ' + ((r.skills || []).join(', ')), ...((r.education || []).map(e => `EDU: ${e.degree || ''} - ${e.school || ''} ${e.year || ''}`))].filter(Boolean).join('\n\n');
 
-        const systemPrompt = `You are a senior hiring manager and executive resume writer. In ONE pass, you will (a) score the resume against the target job, (b) identify every WEAK bullet, (c) rewrite ONLY the weak ones, and (d) estimate the point delta each rewrite contributes. Your output powers a product that AUTO-APPLIES only the changes that improve the score \u2014 so your per-change delta_score must be honest and conservative.
+        const systemPrompt = `You are optimizing a resume to improve alignment with a specific job — NOT rewriting it from scratch. Your job is to make it slightly stronger, clearer, and better aligned to the job without over-editing. The final result must feel human-written, credible, concise, and recruiter-friendly. Your output powers a product that AUTO-APPLIES only the changes that improve the score — so your per-change delta_score must be honest and conservative.
 
-STRONG bullet (DO NOT rewrite \u2014 omit from candidate_changes):
-- Starts with a strong action verb (Led, Drove, Built, Launched, Cut, Grew, Negotiated, Architected, Shipped, Owned, Scaled)
-- Contains a quantified result (%, $, count, time saved, scale) OR names a specific system/tool/methodology
-- Describes ownership or business outcome (not just a task)
-- Length roughly 15-35 words
+CORE RULES (apply to every change you propose):
+1. PRESERVE VOICE. Keep the candidate's tone and existing strengths. Do not rewrite content that is already strong.
+2. DO NOT INFLATE. Never invent specific numbers, dates, companies, titles, team sizes, budgets, or outcomes. If a metric is plausible but unknown, use square-bracket tokens: [X%], [$Xm], [N-person team], [Y hrs/wk].
+3. NEVER remove an existing quantified number or named system/tool from the original. (If the original says "35%", the improved text must keep "35%".)
+4. MINIMAL MEANINGFUL CHANGES only. If the sentence is already clear, leave it alone. Do not paraphrase for the sake of paraphrasing.
+5. NO BUZZWORD STACKING. Avoid stacking vague adjectives like strategic / visionary / dynamic / results-driven / passionate / detail-oriented / proven.
+6. DON'T MAKE IT LONGER. Every rewrite should be equal or shorter than the original unless adding a JD keyword or metric is strictly necessary.
+7. Every rewrite MUST measurably improve at least one of: Job Alignment, Quantified Impact, Bullet Strength. State which in \`affected_categories\`.
+
+════════════════════════════════════════════════════════════════
+SECTION 1 — SUMMARY (highest scrutiny — this is what recruiters read first)
+════════════════════════════════════════════════════════════════
+
+REWRITE the summary ONLY if the current summary shows ANY of these triggers:
+• Length > 400 characters (or > 450 absolute)
+• Reads like a mission statement or career vision instead of a professional snapshot
+• Uses future-focused language: "seeking", "aim to", "aspiring", "looking to", "driven to", "want to"
+• Uses first person: "I", "my", "me", "we", "our"
+• Verbose, vague, or buzzword-heavy (stacks adjectives without concrete substance)
+• Contains any banned phrase (see BANNED PHRASES below)
+If the summary is already concise, third person, recruiter-scannable, and matches the candidate's actual experience — set summary_change to null.
+
+HARD CONSTRAINTS for rewritten summaries (violations = invalid output):
+• ≤ 3 to 4 sentences total
+• ≤ 400 characters (target); 450 characters is the absolute maximum
+• Third person only — NO "I", "my", "we", "our"
+• NO career goals, aspirations, or future-facing phrasing
+• NO banned phrases (see below)
+• Must sound like a real resume summary a recruiter scans in 5 seconds
+
+STRUCTURE (use this exact sentence-by-sentence pattern):
+• Sentence 1: Current role + years of experience + industry/domain.
+• Sentence 2: 2–3 core areas of expertise (concrete, specific — not adjectives).
+• Sentence 3: Measurable impact or scope (team size, revenue, scale, system ownership).
+• Sentence 4 (optional): One differentiator — a specialty, certification, or recognized skill.
+
+BANNED PHRASES (never appear in a rewritten summary):
+• "results-driven"
+• "dynamic professional"
+• "passionate about"
+• "visionary leader"
+• "detail-oriented"
+• "proven track record"
+• "seasoned professional"
+• "thought leader"
+• Any phrase starting with "I am", "I aim to", "My goal is", "Seeking to", "Looking to"
+
+GOOD TONE (recruiter-style, third person, concrete):
+"Vice President with 10+ years of experience in credit risk and business operations within banking. Specializes in strategic planning, data-driven decision making, and cross-functional leadership. Led initiatives impacting 700+ employees and delivered measurable revenue growth. Known for building scalable governance and performance frameworks."
+
+BAD TONE (mission statement, first-person, future-focused — REWRITE):
+"I am a results-driven, visionary leader with a proven track record of driving transformation. Passionate about building high-performing teams, I aim to bring my dynamic leadership style to a role where I can make a lasting impact and continue growing as a strategic partner to the business."
+
+════════════════════════════════════════════════════════════════
+SECTION 2 — EXPERIENCE BULLETS
+════════════════════════════════════════════════════════════════
+
+STRONG bullet (DO NOT rewrite — omit from candidate_changes):
+• Starts with a strong action verb (Led, Drove, Built, Launched, Cut, Grew, Negotiated, Architected, Shipped, Owned, Scaled)
+• Contains a quantified result (%, $, count, time saved, scale) OR names a specific system/tool/methodology
+• Describes ownership or business outcome (not just a task)
+• Length roughly 15–35 words
 
 WEAK bullet (eligible for rewrite):
-- Starts with "responsible for", "helped", "worked on", "assisted", "involved in", "duties included"
-- Contains zero metrics AND zero named systems/tools
-- Describes tasks, not outcomes
-- Missing keywords that the JD emphasizes
+• Starts with "responsible for", "helped", "worked on", "assisted", "involved in", "duties included"
+• Contains zero metrics AND zero named systems/tools
+• Describes tasks, not outcomes
+• Missing keywords that the JD emphasizes
 
-HARD RULES (violations invalidate your response):
-1. NEVER rewrite a STRONG bullet. Return it unchanged by omitting it from candidate_changes.
-2. NEVER invent specific numbers, dates, companies, titles, team sizes, budgets. If a metric is plausible but unknown, use square-bracket tokens: [X%], [$Xm], [N-person team], [Y hrs/wk].
-3. NEVER remove an existing quantified number or named system/tool from the original. (If the original says "35%", the improved bullet must keep "35%".)
-4. Every rewrite MUST measurably improve at least one of: Job Alignment, Quantified Impact, Bullet Strength. State which in \`affected_categories\`.
-5. Cap: rewrite AT MOST 60% of bullets. If more than 60% are weak, rewrite only the weakest 60%.
-6. For skills: reorder to put JD keywords first; add missing JD keywords ONLY if they are legitimately supported by experience bullets or education.
-7. Summary: rewrite only if it's generic or misses the JD focus. Preserve any specific claims.
-8. delta_score is an HONEST integer from -10 to +10 estimating how much the FULL overall_score would change if this single change were applied. Do not inflate. It's fine for most changes to be +1 to +3.
+HARD CAP: For each job role, rewrite ONLY the weakest 1–2 bullets in that role. Do not exceed 2 rewrites per role regardless of how many weak bullets exist.
 
-SCORING RUBRIC for overall_score (match analyzer v2):
-- 90-100: Top 5%. >=85% JD keywords, every bullet quantified, clear story arc.
-- 75-89: Strong. >=70% keyword match, most bullets quantified.
-- 60-74: Average. Generic phrasing, <50% quantified.
-- 45-59: Below average. Weak verbs, no metrics.
-- 0-44: Not viable.
+Each rewritten bullet must: use a strong verb, add or preserve a metric (real or bracket placeholder), add 1 JD keyword if truthful, and be equal or shorter than the original.
+
+════════════════════════════════════════════════════════════════
+SECTION 3 — SKILLS
+════════════════════════════════════════════════════════════════
+
+• REORDER the existing skills list so that skills matching the JD appear first. Always return the full reordered list in \`skills_reordered\` even if the order is unchanged.
+• ADD at most 1–2 skills — and only if they are clearly supported by experience bullets or education in this resume. Never fabricate skills the candidate doesn't have.
+• Return added skills in \`skills_added\`.
+
+════════════════════════════════════════════════════════════════
+SECTION 4 — SCORING & DECISION
+════════════════════════════════════════════════════════════════
+
+SCORING RUBRIC for overall_score:
+• 90–100: Top 5%. >=85% JD keywords, every bullet quantified, clear story arc.
+• 75–89: Strong. >=70% keyword match, most bullets quantified.
+• 60–74: Average. Generic phrasing, <50% quantified.
+• 45–59: Below average. Weak verbs, no metrics.
+• 0–44: Not viable.
 Cap at 70 if the resume is missing most JD keywords even after proposed rewrites.
 
 DECISION: PASS = advance to phone screen. BORDERLINE = advance only if pipeline is thin. REJECT = don't advance.
+
+delta_score is an HONEST integer from -10 to +10 estimating how much overall_score would change if this single change were applied. Do not inflate. Most real rewrites land at +1 to +3. Trivial cosmetic changes should be 0 (and omitted).
+
+════════════════════════════════════════════════════════════════
+SECTION 5 — OUTPUT FORMAT
+════════════════════════════════════════════════════════════════
 
 Return STRICT JSON (no markdown fences) with this exact shape:
 {
@@ -1981,7 +2050,14 @@ Return STRICT JSON (no markdown fences) with this exact shape:
   "strategist_note": "2 sentences summarizing what you changed and why"
 }
 
-Set summary_change to null if summary is already strong; otherwise {"original":"","improved":"","reason":"","keywords_added":[],"placeholders":[],"delta_score":0,"affected_categories":[]}. skills_reordered should be the final ordered skills list (always return it even if unchanged). skills_added should contain only skills truthfully supported by the resume.`;
+Set summary_change to null if the summary already meets all constraints above. Otherwise return {"original":"","improved":"","reason":"","keywords_added":[],"placeholders":[],"delta_score":0,"affected_categories":[]} with the rewritten summary in "improved" (≤400 chars, 3–4 sentences, third person, no banned phrases). skills_reordered must ALWAYS be the full ordered skills list (even if unchanged). skills_added must only contain skills truthfully supported by the resume.
+
+FINAL QUALITY CHECK before returning:
+• Every rewrite feels human, not AI-generated.
+• Summary (if rewritten) is ≤400 chars, ≤4 sentences, third person, no banned phrases.
+• At most 2 bullet rewrites per role.
+• Nothing invented. Every added fact is either in the source or a bracket placeholder.
+• Output is valid JSON.`;
 
         const userPrompt = `Target Role: ${job_title || 'Not specified'}
 Target Company: ${company || 'Not specified'}
@@ -2296,7 +2372,7 @@ Return ONLY valid JSON (no markdown fences) with this EXACT structure:
     "plan_type": "${plan_type}",
     "tagline": "A concise 1-2 sentence professional tagline (MAX 220 characters). Third person. Focus on role, years of experience, domain, and one quantified strength. No fluff, no 'I', no buzzword stacking."
   },
-  "executive_summary": "A PROFESSIONAL RESUME SUMMARY — not a narrative, mission statement, or career vision. STRICT RULES: (1) Maximum 3-5 sentences total. (2) Maximum 500 characters (HARD CAP — outputs over 500 chars are INVALID and will be rejected). (3) No fluff, no storytelling, no 'I aim to', no future goals. (4) Third person only — NO 'I', 'my', 'we'. (5) No buzzword stacking (avoid stacking: strategic, visionary, dynamic, results-driven). (6) Must sound like a real resume a recruiter scans in 5 seconds. STYLE: Direct, factual, concise. Prioritize metrics and scope over adjectives. STRUCTURE: Sentence 1 = current role + years experience + domain. Sentence 2 = key strengths / expertise (2-3 max). Sentence 3 = measurable impact or scope (team size, revenue, scale). Optional Sentence 4 = differentiator or specialty. EXAMPLE: 'Vice President with 10+ years of experience in credit risk and business operations within banking. Specializes in strategic planning, data-driven decision making, and cross-functional leadership. Led initiatives impacting 700+ employees and delivered measurable revenue growth. Known for building scalable governance and performance frameworks.'",
+  "executive_summary": "A PROFESSIONAL RESUME SUMMARY — not a narrative, mission statement, or career vision. STRICT RULES: (1) Maximum 3-4 sentences total. (2) Maximum 400 characters target; 450 characters is the absolute hard cap (outputs over 450 chars are INVALID and will be rejected). (3) No fluff, no storytelling, no future goals, no 'seeking', no 'aim to', no 'aspiring', no 'looking to'. (4) Third person only — NO 'I', 'my', 'we', 'our'. (5) NO banned phrases: 'results-driven', 'dynamic professional', 'passionate about', 'visionary leader', 'detail-oriented', 'proven track record', 'seasoned professional', 'thought leader'. (6) No buzzword stacking (avoid stacking: strategic, visionary, dynamic, results-driven, passionate). (7) Must sound like a real resume a recruiter scans in 5 seconds. STYLE: Direct, factual, concise. Prioritize metrics and scope over adjectives. Must feel human-written, credible, and recruiter-friendly. STRUCTURE (follow this exact sentence-by-sentence pattern): Sentence 1 = current role + years of experience + industry/domain. Sentence 2 = 2-3 concrete areas of expertise (not adjectives). Sentence 3 = measurable impact or scope (team size, revenue, scale). Sentence 4 (optional) = one differentiator — specialty, certification, or recognized skill. GOOD EXAMPLE: 'Vice President with 10+ years of experience in credit risk and business operations within banking. Specializes in strategic planning, data-driven decision making, and cross-functional leadership. Led initiatives impacting 700+ employees and delivered measurable revenue growth. Known for building scalable governance and performance frameworks.' BAD (do NOT emulate): 'I am a results-driven, visionary leader with a proven track record of driving transformation. Passionate about building high-performing teams, I aim to bring my dynamic leadership style to a role where I can make a lasting impact.'",
   "plan_phases": [
     {
       "phase": "PHASE 1",
@@ -2332,7 +2408,7 @@ IMPORTANT GUIDELINES:
 - For plan_phases: You MUST generate EXACTLY 3 phases for 90-day plans, 4 for 12-month, 4 for 2-year plans. Do NOT stop after Phase 1. Every phase must be fully detailed with all fields populated.
 - TIMEFRAME FORMAT: ${timeframeGuidance}
 - Each phase MUST have at least 5 detailed actions, 2+ tools, 5 milestones, and a substantial executive_value paragraph
-- The executive_summary MUST be ≤500 characters, 3-5 sentences, third person, recruiter-scannable (NOT a narrative). Any output over 500 characters is invalid. Do NOT write paragraphs. Do NOT use 'I' or 'my'. Do NOT stack buzzwords. Focus on role, years, domain, metrics, scope.
+- The executive_summary MUST be ≤400 characters (450 absolute hard cap), 3-4 sentences, third person, recruiter-scannable (NOT a narrative). Any output over 450 characters is invalid. Do NOT write paragraphs. Do NOT use 'I' or 'my'. Do NOT use future-focused phrasing ('seeking', 'aim to', 'aspiring', 'looking to'). Do NOT use banned phrases ('results-driven', 'dynamic professional', 'passionate about', 'visionary leader', 'detail-oriented', 'proven track record'). Do NOT stack buzzwords. Focus on role, years, domain, metrics, scope.
 - The hero.tagline MUST be ≤220 characters, 1-2 sentences, third person.
 - Experience: Preserve ALL jobs from the resume data. Do NOT drop, merge, or skip any positions. Include ALL original bullets for each job — reword them to emphasize alignment with the target role, but never reduce the bullet count.
 - Skills should include both the candidate's existing skills AND key skills from the job description
@@ -2369,9 +2445,9 @@ Generate deeply detailed, rich content for each section. Match the depth and qua
                 const lastStop = Math.max(cut.lastIndexOf('. '), cut.lastIndexOf('! '), cut.lastIndexOf('? '));
                 return (lastStop > maxLen * 0.5 ? cut.slice(0, lastStop + 1) : cut).trim();
             };
-            if (typeof generated.executive_summary === 'string' && generated.executive_summary.length > 500) {
-                console.warn('[Builder] executive_summary exceeded 500 chars (' + generated.executive_summary.length + ') — trimming');
-                generated.executive_summary = trimAtSentence(generated.executive_summary, 500);
+            if (typeof generated.executive_summary === 'string' && generated.executive_summary.length > 450) {
+                console.warn('[Builder] executive_summary exceeded 450 chars (' + generated.executive_summary.length + ') — trimming');
+                generated.executive_summary = trimAtSentence(generated.executive_summary, 450);
             }
             if (generated.hero && typeof generated.hero.tagline === 'string' && generated.hero.tagline.length > 220) {
                 console.warn('[Builder] hero.tagline exceeded 220 chars (' + generated.hero.tagline.length + ') — trimming');
