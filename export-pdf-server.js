@@ -119,6 +119,18 @@ async function htmlToPdf(html, { paper } = {}) {
     // Surface in-page errors so we don't get a generic "browser closed".
     page.on('pageerror', (err) => { lastPageError = err; console.error('[export-pdf-server] pageerror:', err && err.message); });
     page.on('crash', () => { lastPageError = new Error('Page process crashed'); console.error('[export-pdf-server] page crashed'); });
+    // Neutralize auto-print / auto-close scripts in the HTML. The resume
+    // builder's HTML was designed to auto-trigger the browser print dialog
+    // on load (for the client-side "Save as PDF" flow), and to close the
+    // window on `afterprint`. In headless Chromium that sequence fires
+    // `window.close()` BEFORE we can call page.pdf(), leaving us with
+    // "Target page has been closed". Stub these out before setContent runs.
+    await page.addInitScript(() => {
+      try {
+        window.print = function () {};
+        window.close = function () {};
+      } catch (_) { /* noop */ }
+    });
     // waitUntil: 'load' — does NOT require network silence, which is unreliable
     // when Google Fonts (or any external resource) takes a while or is blocked.
     // After DOM+resources load, we explicitly wait for document.fonts.ready
