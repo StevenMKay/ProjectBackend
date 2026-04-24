@@ -1,0 +1,44 @@
+# Nixpacks build config for Railway.
+# Adds the system libraries Chromium needs at runtime. Playwright's own
+# postinstall (`playwright install --with-deps chromium`) downloads the
+# Chromium binary; these Nix packages provide the .so dependencies.
+#
+# If a build ever fails with "error while loading shared libraries", add
+# the missing lib here.
+
+[phases.setup]
+nixPkgs = [
+  "nodejs_20",
+  "chromium",
+  "nss",
+  "atk",
+  "at-spi2-atk",
+  "at-spi2-core",
+  "cups",
+  "dbus",
+  "expat",
+  "fontconfig",
+  "freetype",
+  "gdk-pixbuf",
+  "glib",
+  "gtk3",
+  "libdrm",
+  "libxkbcommon",
+  "mesa",
+  "nspr",
+  "pango",
+  "alsa-lib",
+  "xorg.libX11",
+  "xorg.libXcomposite",
+  "xorg.libXdamage",
+  "xorg.libXext",
+  "xorg.libXfixes",
+  "xorg.libXrandr",
+  "xorg.libxcb"
+]
+
+[phases.install]
+cmds = ["npm ci --no-audit --no-fund"]
+
+[start]
+cmd = "node server.js"
