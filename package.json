@@ -2,9 +2,13 @@
   "name": "backend",
   "version": "1.0.0",
   "main": "server.js",
+  "engines": {
+    "node": ">=18.18 <21"
+  },
   "scripts": {
     "start": "node server.js",
-    "dev": "nodemon server.js"
+    "dev": "nodemon server.js",
+    "postinstall": "playwright install --with-deps chromium || true"
   },
   "keywords": [],
   "author": "",
@@ -15,11 +19,12 @@
     "dotenv": "^16.0.0",
     "express": "^5.1.0",
     "firebase-admin": "^12.0.0",
+    "googleapis": "^131.0.0",
     "multer": "^1.4.5-lts.1",
     "node-fetch": "^3.3.2",
     "nodemailer": "^6.9.0",
-    "googleapis": "^131.0.0",
     "pdf-parse": "^1.1.1",
+    "playwright": "^1.48.2",
     "stripe": "^14.0.0"
   },
   "devDependencies": {
