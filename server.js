@@ -1996,6 +1996,13 @@ DO NOT:
 - Only swap verbs without improving meaning
 - Add fake metrics
 - Over-expand bullets
+- Add any specific metric (%, $, count, timeframe) unless that exact number already appears in the source bullet, in another bullet of the same role, or is clearly and unambiguously implied by the source wording. "Clearly implied" means a reasonable reader would infer the same number from the original. Promotion / tenure / title-change / responsibility-scope bullets are NEVER a license to invent outcomes — if no number is present, use a [X%] / [$Xm] / [N] placeholder or omit the metric entirely.
+
+HALLUCINATION EXAMPLE (NEVER DO THIS):
+original: "Promoted from shift supervisor after 3 years."
+BAD improved: "Advanced to Assistant Operations Manager, contributing to a 15% increase in process efficiency over 3 years."  ← the 15% is fabricated
+GOOD improved: "Promoted to Assistant Operations Manager after 3 years, recognized for consistent performance and team leadership."
+ALSO OK: "Promoted to Assistant Operations Manager after 3 years; drove [X%] improvement in [process/KPI]."
 
 GOOD IMPROVEMENT:
 "Built dashboards"
