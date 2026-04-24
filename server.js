@@ -1604,6 +1604,15 @@ HARD RULES (violations invalidate the response):
 3. Every improved bullet must target: strong action verb + quantified impact (real or placeholder) + business context + JD keyword (only when truthful).
 4. If a bullet is already strong (verb + metric + context), OMIT it from experience_diffs — do not change it.
 5. If no JD is provided, still improve phrasing & quantification, but leave keywords_added as an empty array.
+6. NEVER add experience, tools, technologies, methodologies, domains, responsibilities, or project types that are not explicitly stated in the candidate's original resume. The most common failure is: JD mentions "feature engineering" / "machine learning" / "Python" / "Kubernetes" → candidate's resume does NOT mention it → you append it to a bullet to close the gap. THIS IS FABRICATION. Do not do it. If a required skill is missing, either surface genuinely adjacent experience using the candidate's own words, or leave the bullet alone. keywords_added is for terms the candidate's existing work already describes (synonyms / category names) — it is NEVER a license to attach a new capability.
+
+GOAL-DRIVEN HALLUCINATION EXAMPLE (NEVER DO THIS):
+JD mentions: "feature engineering", "ML models"
+original bullet: "Ran 11 A/B tests on email campaigns, lifting CTR 18% YoY."
+BAD improved:   "Ran 11 A/B tests on email campaigns, lifting CTR 18% YoY, and applied feature engineering to optimize targeting."  ← "feature engineering" was never in the resume
+original bullet: "Cleaned 3M-row customer dataset for professor-led study."
+BAD improved:   "Cleaned 3M-row customer dataset supporting a machine learning study on customer behavior."  ← "machine learning" was never in the resume
+GOOD: omit both bullets from experience_diffs.
 
 Return ONLY valid JSON (no markdown fences) with this exact structure:
 {
@@ -1997,6 +2006,17 @@ DO NOT:
 - Add fake metrics
 - Over-expand bullets
 - Add any specific metric (%, $, count, timeframe) unless that exact number already appears in the source bullet, in another bullet of the same role, or is clearly and unambiguously implied by the source wording. "Clearly implied" means a reasonable reader would infer the same number from the original. Promotion / tenure / title-change / responsibility-scope bullets are NEVER a license to invent outcomes — if no number is present, use a [X%] / [$Xm] / [N] placeholder or omit the metric entirely.
+- Introduce NEW experience, tools, technologies, methodologies, domains, responsibilities, or project types that are not explicitly stated in the candidate's original resume. This is the #1 failure mode of JD-aware optimizers: the JD mentions a keyword (e.g. "feature engineering", "machine learning", "Python", "Kubernetes", "SQL") → the candidate's resume does NOT mention it → the model appends it to a bullet to close the gap. THIS IS FABRICATION. Do not do it, even if the JD heavily emphasizes the missing skill. If a required skill is missing, either (a) surface genuinely adjacent experience using the candidate's own words, or (b) leave the bullet alone and let \`unrecoverable_gaps\` / \`missing_keywords\` flag it downstream.
+
+GOAL-DRIVEN HALLUCINATION EXAMPLE (NEVER DO THIS — this is the pattern we are explicitly blocking):
+JD mentions: "feature engineering", "ML models"
+original bullet: "Ran 11 A/B tests on email campaigns, lifting CTR 18% YoY."
+BAD improved:   "Ran 11 A/B tests on email campaigns, lifting CTR 18% YoY, and applied feature engineering to optimize targeting."  ← "feature engineering" was never in the resume
+original bullet: "Cleaned 3M-row customer dataset for professor-led study."
+BAD improved:   "Cleaned 3M-row customer dataset supporting a machine learning study on customer behavior."  ← "machine learning" was never in the resume
+GOOD: leave both bullets unchanged and flag "feature engineering" / "ML" in missing_keywords so the UI tells the candidate honestly.
+
+KEYWORDS_ADDED RULE: A term only qualifies for \`keywords_added\` if it genuinely already describes the existing work (synonym or category-name for something the candidate actually did). It is NEVER a license to attach a new capability to an existing bullet.
 
 HALLUCINATION EXAMPLE (NEVER DO THIS):
 original: "Promoted from shift supervisor after 3 years."
@@ -2053,8 +2073,9 @@ SKILLS RULES
 ════════════════════════════════════════════════════════════════
 
 - Reorder skills based on job relevance (JD keywords first)
-- Add max 1-2 skills ONLY if clearly supported by experience
+- Add max 1-2 skills ONLY if clearly supported by existing experience text (the skill must already be demonstrated by a bullet the candidate wrote — not merely "relevant to the JD")
 - Do NOT add speculative skills
+- Do NOT add a skill just because the JD requires it. Missing JD skills go in unrecoverable_gaps / missing_keywords for the UI, NEVER in skills_added.
 - Return full reordered list in \`skills_reordered\` even if order is unchanged
 - Return newly added skills in \`skills_added\`
 
@@ -2062,9 +2083,10 @@ SKILLS RULES
 JOB ALIGNMENT
 ════════════════════════════════════════════════════════════════
 
-- Align wording to match job description
+- Align wording to match job description USING ONLY vocabulary the candidate has already earned through their existing bullets.
 - Prioritize important keywords naturally
 - Avoid keyword stuffing
+- If a JD keyword is not supported by anything in the resume, it belongs in missing_keywords / unrecoverable_gaps — NEVER in an improved bullet, a summary, or skills_added.
 
 ════════════════════════════════════════════════════════════════
 SCORING & DECISION
@@ -2367,6 +2389,15 @@ HARD RULES:
 - NEVER invent specific numbers, titles, companies, or team sizes. Use [placeholder] tokens like [X%], [$Xm], [N-person team].
 - Preserve the who/what/when of every bullet.
 - If a bullet is already strong AND already surfaces a top requirement, omit from experience_diffs.
+- NEVER add experience, tools, technologies, methodologies, domains, responsibilities, or project types that are not explicitly stated in the candidate's original resume — even if the JD heavily requires them. The most common failure of JD-aware tailoring is goal-driven hallucination: JD says "feature engineering" / "ML" / "Python" → resume has none of these → the model appends them to a bullet to close the gap. THIS IS FABRICATION. When a requirement has no supporting evidence, it goes in unrecoverable_gaps with coverage:"none" in keyword_mapping. It never gets quietly sewn into a bullet.
+- keywords_added is only for terms the candidate's existing work already describes (synonyms / category names). It is NEVER a license to attach a new capability to a bullet.
+- skills_added: only include skills that are already directly demonstrated by an existing bullet. Missing JD skills go in unrecoverable_gaps, not skills_added.
+
+GOAL-DRIVEN HALLUCINATION EXAMPLE (NEVER DO THIS):
+JD mentions: "feature engineering", "ML models"
+original bullet: "Ran 11 A/B tests on email campaigns, lifting CTR 18% YoY."
+BAD improved:   "Ran 11 A/B tests on email campaigns, lifting CTR 18% YoY, and applied feature engineering to optimize targeting."  ← "feature engineering" was never in the resume → fabrication
+GOOD: omit the bullet; record "feature engineering" in unrecoverable_gaps with coverage:"none".
 
 Return ONLY valid JSON:
 {
