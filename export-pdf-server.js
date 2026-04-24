@@ -94,14 +94,40 @@ function _rateLimit(uid) {
 
 async function htmlToPdf(html, { paper } = {}) {
   const chromium = _getChromium();
+  // Flags tuned for container environments (Railway, Docker, Cloud Run).
+  // --no-sandbox / --disable-setuid-sandbox: required when running as root.
+  // --disable-dev-shm-usage: /dev/shm is 64MB in Docker which is too small
+  //                         for Chromium's IPC buffers.
+  // --disable-gpu:          no GPU in the container, avoids a crash path.
+  // --no-zygote:            disables the zygote process which can OOM on
+  //                         low-memory hosts.
+  // --font-render-hinting=none: avoids a known font-subsystem crash when
+  //                         rendering Google Fonts inside headless.
   const browser = await chromium.launch({
-    args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage']
+    args: [
+      '--no-sandbox',
+      '--disable-setuid-sandbox',
+      '--disable-dev-shm-usage',
+      '--disable-gpu',
+      '--no-zygote',
+      '--font-render-hinting=none'
+    ]
   });
+  let lastPageError = null;
   try {
     const context = await browser.newContext();
     const page = await context.newPage();
-    // networkidle so web fonts + images are loaded before snapshot.
-    await page.setContent(html, { waitUntil: 'networkidle', timeout: 15000 });
+    // Surface in-page errors so we don't get a generic "browser closed".
+    page.on('pageerror', (err) => { lastPageError = err; console.error('[export-pdf-server] pageerror:', err && err.message); });
+    page.on('crash', () => { lastPageError = new Error('Page process crashed'); console.error('[export-pdf-server] page crashed'); });
+    // waitUntil: 'load' — does NOT require network silence, which is unreliable
+    // when Google Fonts (or any external resource) takes a while or is blocked.
+    // After DOM+resources load, we explicitly wait for document.fonts.ready
+    // (bounded) so webfonts render correctly without hanging on networkidle.
+    await page.setContent(html, { waitUntil: 'load', timeout: 15000 });
+    try {
+      await page.evaluate(() => (document.fonts && document.fonts.ready) ? document.fonts.ready : null);
+    } catch (_) { /* font timeout — render anyway with fallback fonts */ }
     const format = (paper === 'a4' || paper === 'A4') ? 'A4' : 'Letter';
     const buffer = await page.pdf({
       format,
@@ -110,6 +136,12 @@ async function htmlToPdf(html, { paper } = {}) {
       preferCSSPageSize: true
     });
     return buffer;
+  } catch (err) {
+    // Attach any captured page error so the caller gets context.
+    if (lastPageError && err && !err._pageError) {
+      err._pageError = lastPageError.message || String(lastPageError);
+    }
+    throw err;
   } finally {
     try { await browser.close(); } catch (_) { /* noop */ }
   }
@@ -139,8 +171,22 @@ router.post('/api/builder/export/pdf-server', async (req, res) => {
     if (err && err.code === 'PLAYWRIGHT_MISSING') {
       return res.status(501).json({ error: err.message });
     }
-    console.error('[export-pdf-server] render failed:', err);
-    return res.status(500).json({ error: 'PDF render failed.' });
+    // Log the full error to Railway so we can diagnose without exposing
+    // internals to end users.
+    console.error('[export-pdf-server] render failed:', err && err.stack || err);
+    if (err && err._pageError) {
+      console.error('[export-pdf-server] captured page error:', err._pageError);
+    }
+    // While we are stabilising the server-PDF path, return the actual
+    // error message to authenticated callers. This is gated by an env
+    // var so we can lock it down later without another deploy cycle.
+    const debug = process.env.PDF_SERVER_DEBUG === '1';
+    const payload = { error: 'PDF render failed.' };
+    if (debug) {
+      payload.detail = (err && err.message) || String(err);
+      if (err && err._pageError) payload.pageError = err._pageError;
+    }
+    return res.status(500).json(payload);
   }
 });
 
