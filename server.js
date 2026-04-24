@@ -1576,7 +1576,30 @@ If a field cannot be determined, use an empty string or empty array. Extract eve
 ADDITIONAL SIGNAL EXTRACTION (append only — do not change the core schema above):
 - For each experience object, add "is_quantified_count": integer (number of bullets that contain a numeric metric such as %, $, #, time, team size, volume).
 - For each experience object, add "role_keywords": array of 5-8 distinctive terms describing what this person actually did in that role (used downstream to match job descriptions).
-- Bullets remain strings in the "bullets" array (do not change bullet shape — downstream code expects strings).`;
+- Bullets remain strings in the "bullets" array (do not change bullet shape — downstream code expects strings).
+
+SECTION DETECTION (critical — do NOT treat these sections as optional filler):
+Resumes frequently use varied heading wording for the same type of content. Scan for ALL of the following section headings (case-insensitive, also match near-synonyms):
+- Achievements / Selected Accomplishments / Key Achievements / Accomplishments / Awards / Honors / Recognition / Notable Wins → populate "achievements" (map each item to {title, description}).
+- Leadership / Leadership Experience / Leadership & Engagement / Board Memberships / Boards / Committees / Community Leadership → populate "leadership_engagement".
+- Volunteer / Volunteer Experience / Community Involvement / Service / Pro Bono / Giving Back → populate "volunteer_experience". If an item is clearly a board or leadership role, prefer "leadership_engagement" instead.
+- Projects / Side Projects / Personal Projects / Portfolio / Case Studies / Research Projects → populate "projects".
+- Certifications / Licenses / Professional Certifications / Credentials / Accreditations → populate "certifications".
+- Professional Development / Courses / Training / Continuing Education → if they are credential-like (certificate issued) populate "certifications"; otherwise include them as "achievements".
+- Publications / Speaking Engagements / Talks / Conference Presentations / Media Appearances → populate "achievements" (title = publication/talk title, description = venue/date/context).
+EXTRACTION RULES:
+- If a labeled section is present, its contents MUST be represented somewhere in the returned JSON unless the section is truly empty. Do NOT drop clearly labeled content.
+- Do NOT invent missing data. If a section doesn't exist, leave the corresponding array empty.
+- Preserve original meaning and wording as much as the schema allows.
+- Prefer extracting imperfectly (best-fit schema field) over dropping clearly labeled content.
+- If an item could fit two fields (e.g. a volunteer board seat), pick the single best fit — do not duplicate it.
+
+VERIFICATION PASS (run before returning JSON):
+1. Did the resume contain headings for achievements / accomplishments / awards / honors / recognition? If yes, is "achievements" populated?
+2. Did the resume contain headings for volunteer / community / leadership / board / committee work? If yes, are "volunteer_experience" and/or "leadership_engagement" populated?
+3. Did the resume contain headings for certifications / licenses / credentials? If yes, is "certifications" populated?
+4. Did the resume contain headings for projects / side projects / portfolio? If yes, is "projects" populated?
+5. If the answer to any of the above is "yes, but the corresponding array is empty in my draft", go back and extract the items before returning.`;
 
         // Check if client sent rendered PDF page images for vision-based parsing
         let pageImages = [];
@@ -1590,17 +1613,81 @@ ADDITIONAL SIGNAL EXTRACTION (append only — do not change the core schema abov
         }
 
         let result;
+        let usedVision = false;
         if (pageImages.length > 0) {
             const visionUserText = `I have attached the actual resume pages as images so you can see the true layout (columns, sections, sidebar vs main content). Use the IMAGES as the PRIMARY source for understanding which bullets belong to which job role, and which sections are sidebar vs main content. Here is also the raw extracted text as a supplement:\n\n${resumeText}`;
             result = await callOpenAIWithImages(apiKey, systemPrompt, visionUserText, pageImages, 'gpt-4o', 16000, true, 0.2);
+            usedVision = true;
         } else {
             result = await callOpenAI(apiKey, systemPrompt, resumeText, 'gpt-4o', 16000, true, 0.2);
         }
-        const resumeData = extractJSON(result);
+        let resumeData = extractJSON(result);
+
+        // ISS-003 / ISS-004: Completeness-based fallback.
+        // The vision path (and occasionally text-only too) sometimes returns
+        // JSON that is syntactically valid but heavily under-populated — a
+        // real user reported "only skills populated, everything else blank".
+        // A narrow "experience is empty" check is not enough: resumes often
+        // lose achievements / certifications / education while keeping the
+        // experience array. We retry ONCE (text-only, same enriched prompt)
+        // when the draft looks under-parsed relative to the raw text.
+        function _isEmptyField(v) {
+            if (v == null) return true;
+            if (Array.isArray(v)) return v.length === 0;
+            if (typeof v === 'string') return v.trim().length === 0;
+            return false;
+        }
+        function _completenessReport(rd) {
+            const fields = ['experience', 'education', 'skills', 'certifications', 'achievements'];
+            const empty = fields.filter(f => !rd || _isEmptyField(rd[f]));
+            return { empty, emptyCount: empty.length, total: fields.length };
+        }
+        const rawLen = (resumeText || '').trim().length;
+        let completeness = _completenessReport(resumeData);
+        // Under-parsed: raw text is substantive AND >=3 of the 5 core fields
+        // came back empty. Also covers the old narrow case (unparseable JSON).
+        const underParsed = !!resumeData && rawLen > 500 && completeness.emptyCount >= 3;
+        const unparseable = !resumeData;
+        if ((unparseable || underParsed) && rawLen > 0) {
+            console.warn('[parse-resume] Low completeness parse detected. Empty fields: %s. Retrying with broader extraction guidance. (unparseable=%s, vision=%s, rawLen=%d)',
+                (completeness.empty.join(', ') || 'none'), unparseable, usedVision, rawLen);
+            try {
+                const fallback = await callOpenAI(apiKey, systemPrompt, resumeText, 'gpt-4o', 16000, true, 0.2);
+                const fallbackData = extractJSON(fallback);
+                if (fallbackData) {
+                    // Accept the retry only if it is strictly more complete,
+                    // or if the original was unparseable.
+                    const fbReport = _completenessReport(fallbackData);
+                    if (unparseable || fbReport.emptyCount < completeness.emptyCount) {
+                        resumeData = fallbackData;
+                        completeness = fbReport;
+                        console.log('[parse-resume] Retry accepted. Empty after retry: %s', fbReport.empty.join(', ') || 'none');
+                    } else {
+                        console.log('[parse-resume] Retry did not improve completeness; keeping original. Empty after retry: %s', fbReport.empty.join(', ') || 'none');
+                    }
+                }
+            } catch (fbErr) {
+                console.error('[parse-resume] Completeness retry failed:', fbErr.message);
+            }
+        }
+
         if (!resumeData) {
             console.error('[Builder] parse-resume: unparseable AI response:', result.slice(0, 500));
             return res.status(500).json({ error: 'Failed to parse AI response as JSON' });
         }
+
+        // ISS-004: post-parse diagnostic. Always log per-field counts so we
+        // can spot chronic under-extraction patterns without waiting for a
+        // user complaint. Wrapped in try/catch so a logging fault can never
+        // block the response.
+        try {
+            const _len = v => Array.isArray(v) ? v.length : 0;
+            console.log('[parse-resume] Parsed fields: experience=%d, education=%d, skills=%d, certifications=%d, achievements=%d, leadership=%d, volunteer=%d, projects=%d',
+                _len(resumeData.experience), _len(resumeData.education), _len(resumeData.skills),
+                _len(resumeData.certifications), _len(resumeData.achievements),
+                _len(resumeData.leadership_engagement), _len(resumeData.volunteer_experience),
+                _len(resumeData.projects));
+        } catch (_) { /* diagnostic only */ }
 
         await deductAIUseServer(req);
         res.json({ resume_data: resumeData, raw_text: resumeText });
