@@ -2076,18 +2076,52 @@ DECISION: PASS = advance to phone screen. BORDERLINE = advance only if pipeline 
 delta_score is an HONEST integer from -10 to +10 estimating how much overall_score would change if this single change were applied. Do not inflate. Most real rewrites land at +1 to +3. Trivial cosmetic changes should be 0 (and omitted).
 
 ════════════════════════════════════════════════════════════════
+WHY THIS MATTERS (PER-CHANGE EXPLANATION)
+════════════════════════════════════════════════════════════════
+
+For EVERY candidate_change you return, include a "why_it_matters" field.
+This is a 1-sentence recruiter-facing explanation that answers:
+
+    "Why does this change make the candidate more hireable for THIS role?"
+
+Keep it concise, recruiter-relevant, and grounded in the job requirements.
+
+GOOD EXAMPLES:
+- "Adds measurable impact, improving credibility for performance-driven roles"
+- "Highlights leadership and ownership, which aligns with senior-level expectations"
+- "Improves keyword alignment with job requirements, increasing ATS match potential"
+- "Clarifies business outcomes, helping recruiters quickly understand value"
+- "Emphasizes scale and scope, which is critical for enterprise-level roles"
+
+BANNED (never use these):
+- "Improves wording"
+- "Makes it clearer"
+- "Better phrasing"
+- "Improved grammar"
+- Any generic note that doesn't tie to hireability or role fit
+
+════════════════════════════════════════════════════════════════
 STRATEGIST NOTE (UPGRADED)
 ════════════════════════════════════════════════════════════════
 
-Explain improvements clearly and professionally:
-- What improved
-- Why it matters for this job
-- Where alignment increased
+Write the strategist_note like expert hiring insight. It MUST explain:
+- what improved
+- why it matters for THIS role
+- how it improves competitiveness
 
-Keep concise but insightful (2-3 sentences).
+Tone: concise, professional, insight-driven (2-3 sentences).
 
-Example:
-"Improved alignment with enterprise risk leadership requirements by strengthening ownership language and prioritizing model governance experience. Minor refinements increase executive-level positioning without altering core content."
+GOOD EXAMPLES:
+1. "Strengthened alignment with enterprise risk leadership expectations by emphasizing model governance and large-team ownership. Enhancements better position the candidate for executive-level decision-making roles."
+2. "Improved alignment with data science requirements by highlighting experimentation experience and strengthening technical skill positioning. Changes increase relevance for machine learning-focused roles."
+3. "Refined bullet points to better communicate measurable impact and stakeholder scope, improving credibility for cross-functional leadership roles."
+
+BANNED strategist_note phrases (reject and rewrite if tempted):
+- "Improved wording"
+- "Enhanced clarity"
+- "Made resume better"
+- "Minor edits applied"
+- Any single-clause note under 10 words
 
 ════════════════════════════════════════════════════════════════
 OUTPUT FORMAT (REQUIRED)
@@ -2107,7 +2141,8 @@ Return STRICT JSON (no markdown fences) with this exact shape:
       "section": "experience|summary|skills",
       "original": "",
       "improved": "",
-      "reason": "short why this is better",
+      "reason": "short why this is better (what specifically changed)",
+      "why_it_matters": "1 sentence recruiter-facing — why this makes the candidate more hireable for THIS role (see WHY THIS MATTERS examples above)",
       "keywords_added": [],
       "metric_added": true,
       "placeholders": [],
@@ -2133,7 +2168,7 @@ Return STRICT JSON (no markdown fences) with this exact shape:
   "strategist_note": "2-3 sentences explaining what improved, why it matters, and where alignment increased"
 }
 
-Set summary_change to null if the summary already meets all constraints. Otherwise return {"original":"","improved":"","reason":"","keywords_added":[],"placeholders":[],"delta_score":0,"affected_categories":[]} with the rewritten summary in "improved" (≤400 chars, 3-4 sentences, third person, no banned phrases).
+Set summary_change to null if the summary already meets all constraints. Otherwise return {"original":"","improved":"","reason":"","why_it_matters":"","keywords_added":[],"placeholders":[],"delta_score":0,"affected_categories":[]} with the rewritten summary in "improved" (≤400 chars, 3-4 sentences, third person, no banned phrases). The "why_it_matters" field on summary_change should explain why the new summary improves recruiter scan / role fit (e.g. "Improves readability and matches recruiter expectations for quick scanning in senior data roles").
 
 ════════════════════════════════════════════════════════════════
 FINAL QUALITY CHECK
