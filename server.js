@@ -1393,6 +1393,32 @@ async function getOpenAIKey(req) {
     return null;
 }
 
+// Translate OpenAI platform errors (billing / quota / invalid key / 429)
+// into a neutral message so end users — especially free-trial customers —
+// don't see raw OpenAI strings like "Your account is not active, please
+// check your billing details on our website." and think it refers to
+// THEIR subscription. See ISS-002 in ISSUES-AUDIT.md.
+function sanitizeOpenAIError(rawMessage, status) {
+    const msg = (rawMessage || '').toString();
+    const lower = msg.toLowerCase();
+    const isBilling =
+        lower.includes('account is not active') ||
+        lower.includes('billing') ||
+        lower.includes('quota') ||
+        lower.includes('insufficient_quota') ||
+        lower.includes('exceeded your current quota') ||
+        lower.includes('payment') ||
+        lower.includes('invalid api key') ||
+        lower.includes('incorrect api key') ||
+        (lower.includes('api key') && status === 401);
+    if (isBilling) {
+        console.error('[OpenAI] Upstream billing / key issue — needs operator attention:', msg);
+        return 'AI service is temporarily unavailable on our end. No charge was made — please try again in a few minutes. If it persists, contact support.';
+    }
+    if (status === 429) return 'AI service is briefly overloaded. Please try again in a moment.';
+    return msg || ('OpenAI API error ' + status);
+}
+
 // Helper: call OpenAI chat completions
 async function callOpenAI(apiKey, systemPrompt, userPrompt, model, maxTokens, jsonMode, temperature) {
     const body = {
@@ -1412,7 +1438,7 @@ async function callOpenAI(apiKey, systemPrompt, userPrompt, model, maxTokens, js
     });
     if (!res.ok) {
         const err = await res.json().catch(() => ({}));
-        throw new Error(err.error ? err.error.message : 'OpenAI API error ' + res.status);
+        throw new Error(sanitizeOpenAIError(err.error ? err.error.message : null, res.status));
     }
     const data = await res.json();
     if (!data.choices || !data.choices[0]) throw new Error('No response from OpenAI');
@@ -1471,7 +1497,7 @@ async function callOpenAIWithImages(apiKey, systemPrompt, textContent, base64Png
     });
     if (!res.ok) {
         const err = await res.json().catch(() => ({}));
-        throw new Error(err.error ? err.error.message : 'OpenAI API error ' + res.status);
+        throw new Error(sanitizeOpenAIError(err.error ? err.error.message : null, res.status));
     }
     const data = await res.json();
     if (!data.choices || !data.choices[0]) throw new Error('No response from OpenAI');
