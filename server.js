@@ -765,7 +765,7 @@ app.post('/api/billing/checkout', async (req, res) => {
         res.status(500).json({ error: err.message || 'Failed to create checkout session' });
     }
     } catch (err) {
-        console.error('[Billing] Outer checkout error:', err.message);
+        console.error('[Billing] Checkout outer error:', err.message);
         res.status(500).json({ error: err.message || 'Server error' });
     }
 });
