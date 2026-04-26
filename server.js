@@ -3122,6 +3122,34 @@ try {
 }
 
 // ============================================================
+// CV / Cover Letter generator
+// ============================================================
+app.post('/api/builder/generate-cv', async (req, res) => {
+  try {
+    const { profile = {}, targetRole = {}, resume = {} } = req.body || {};
+    const name = profile.name || profile.fullName || resume.name || '';
+    const role = targetRole.title || targetRole.jobTitle || 'the target role';
+    const company = targetRole.company || '';
+    const skills = Array.isArray(resume.skills) ? resume.skills.slice(0, 6) : [];
+    const cv = {
+      heading: `Cover Letter${role ? ' - ' + role : ''}`,
+      opening: 'Dear Hiring Team,',
+      body: [
+        `I am excited to apply for ${role}${company ? ' at ' + company : ''}.`,
+        `My background includes ${skills.length ? skills.join(', ') : 'strategic execution, process improvement, and cross-functional leadership'}.`,
+        "I would welcome the opportunity to discuss how my experience can support your team's goals."
+      ],
+      closing: 'Thank you for your time and consideration.',
+      generatedAt: new Date().toISOString()
+    };
+    res.json({ ok: true, cv });
+  } catch (err) {
+    console.error('[generate-cv]', err);
+    res.status(500).json({ ok: false, error: 'Failed to generate CV' });
+  }
+});
+
+// ============================================================
 // START SERVER
 // ============================================================
 const PORT = process.env.PORT || 3001;
