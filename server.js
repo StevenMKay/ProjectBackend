@@ -2013,8 +2013,34 @@ Diversity Seed: ${seed || Date.now()} \u2014 use this to make sure you produce D
 // ============================================================
 // POST /api/builder/optimize  (ONE-SHOT guided flow: analyze -> enhance -> gate)
 // Primary endpoint powering the "Optimize for this Job" CTA.
-// Returns: original_score, improved_score, accepted_changes[], discarded_changes[], analysis
+// Returns: full career package — optimized resume, enriched analysis (ATS, skills,
+// market intel, candidate benchmark, interview prep), 90-day/12-month/2-year plans, CV.
 // ============================================================
+function normalizeBasicPlanShape(p = {}) {
+    return {
+        horizon: 'combined',
+        days90: p.days90 || {
+            title: 'First 90 Days',
+            executiveSummary: p.success_summary || '',
+            phases: p.phases || p.plan_phases || [],
+            successMetrics: p.success_criteria || []
+        },
+        months12: p.months12 || {
+            title: '12-Month Growth Plan',
+            leadershipNarrative: '',
+            quarters: [],
+            successMetrics: p.kpis || []
+        },
+        years2: p.years2 || {
+            title: '2-Year Strategic Career Plan',
+            year1: { focus: '', goals: [], capabilitiesToBuild: [], milestones: [] },
+            year2: { focus: '', goals: [], capabilitiesToBuild: [], milestones: [] },
+            longTermPositioning: '',
+            risksAndMitigations: []
+        }
+    };
+}
+
 app.post('/api/builder/optimize', requireBuilderAuth, checkBuilderQuota, express.json(), async (req, res) => {
     try {
         const { resume_data, job_description, job_title, company } = req.body || {};
@@ -2271,7 +2297,10 @@ BANNED strategist_note phrases (reject and rewrite if tempted):
 OUTPUT FORMAT (REQUIRED)
 ════════════════════════════════════════════════════════════════
 
-Return STRICT JSON (no markdown fences) with this exact shape:
+Return STRICT JSON (no markdown fences) with this exact shape. All sections are required.
+
+SALARY RULE: salaryRange.low/mid/high must always be null. Always set note to "Estimated only. Live salary data is not connected." Do not guess salary.
+
 {
   "original_score": 0,
   "decision": "PASS|BORDERLINE|REJECT",
@@ -2286,7 +2315,7 @@ Return STRICT JSON (no markdown fences) with this exact shape:
       "original": "",
       "improved": "",
       "reason": "short why this is better (what specifically changed)",
-      "why_it_matters": "1 sentence recruiter-facing — why this makes the candidate more hireable for THIS role (see WHY THIS MATTERS examples above)",
+      "why_it_matters": "1 sentence recruiter-facing — why this makes the candidate more hireable for THIS role",
       "keywords_added": [],
       "metric_added": true,
       "placeholders": [],
@@ -2299,6 +2328,7 @@ Return STRICT JSON (no markdown fences) with this exact shape:
   "skills_added": [],
   "analysis": {
     "overall_score": 0,
+    "resume_match_score": 0,
     "job_alignment_score": 0,
     "quantification_score": 0,
     "bullet_strength_score": 0,
@@ -2307,12 +2337,152 @@ Return STRICT JSON (no markdown fences) with this exact shape:
     "weak_bullets_count": 0,
     "strong_bullets_count": 0,
     "top_5_fixes": [],
-    "competitive_gaps": []
+    "competitive_gaps": [],
+    "status": "Borderline",
+    "interview_likelihood": "May get interview with minor fixes",
+    "overall_assessment": "2-3 sentence recruiter-facing summary",
+    "score_breakdown": {
+      "keyword_alignment": 0,
+      "bullet_strength": 0,
+      "experience_relevance": 0,
+      "clarity_structure": 0,
+      "seniority_signals": 0
+    },
+    "top_risks": ["Risk 1","Risk 2","Risk 3"],
+    "top_strengths": ["Strength 1","Strength 2","Strength 3"],
+    "top_fixes": [
+      {"fix":"Fix 1","score_impact":5},
+      {"fix":"Fix 2","score_impact":4},
+      {"fix":"Fix 3","score_impact":3},
+      {"fix":"Fix 4","score_impact":3},
+      {"fix":"Fix 5","score_impact":2}
+    ],
+    "benchmark": {
+      "top_candidate_patterns": ["Pattern 1","Pattern 2","Pattern 3"],
+      "matches": ["Match 1","Match 2"],
+      "gaps": ["Gap 1","Gap 2"]
+    },
+    "ats": {
+      "score": 0,
+      "keywordAlignment": 0,
+      "formattingRisk": "low",
+      "missingKeywords": ["keyword1","keyword2"],
+      "matchedKeywords": ["keyword1","keyword2"],
+      "keywordPlacementSuggestions": [
+        {"keyword":"example","suggestedSection":"summary","reason":"Appears in JD but missing from summary"}
+      ]
+    },
+    "skillsIntel": {
+      "requiredSkills": ["Skill 1","Skill 2"],
+      "preferredSkills": ["Skill 1","Skill 2"],
+      "transferableSkills": ["Skill 1","Skill 2"],
+      "skillsToAvoidClaimingUnlessTrue": ["Skill 1"]
+    },
+    "marketIntel": {
+      "salaryRange": {
+        "low": null,
+        "mid": null,
+        "high": null,
+        "confidence": "low",
+        "note": "Estimated only. Live salary data is not connected."
+      },
+      "trendingSkills": ["Skill 1","Skill 2"],
+      "relatedTitles": ["Title 1","Title 2"],
+      "demandSignal": "moderate",
+      "marketNotes": ["Note 1","Note 2"]
+    },
+    "candidateBenchmark": {
+      "topCandidatePatterns": ["Pattern 1","Pattern 2","Pattern 3"],
+      "whereUserMatches": ["Match 1","Match 2"],
+      "whereUserFallsShort": ["Gap 1","Gap 2"],
+      "competitiveness": "Borderline"
+    },
+    "interviewPrep": {
+      "likelyQuestions": ["Question 1","Question 2","Question 3"],
+      "highRiskQuestions": ["Question 1","Question 2"],
+      "storiesToPrepare": ["Story theme 1","Story theme 2"]
+    },
+    "riskProfile": {
+      "topRisks": ["Risk 1","Risk 2"],
+      "interviewConcerns": ["Concern 1","Concern 2"],
+      "credibilityGaps": ["Gap 1"]
+    },
+    "recommendations": {
+      "highestImpactFixes": [
+        {"fix":"Fix text","why":"Why it matters","expectedImpact":5}
+      ],
+      "bulletRewriteIdeas": [
+        {"original":"Original bullet","improved":"Improved bullet","reason":"Why better"}
+      ],
+      "nextActions": ["Action 1","Action 2","Action 3"]
+    }
+  },
+  "plan": {
+    "horizon": "combined",
+    "days90": {
+      "title": "First 90 Days",
+      "executiveSummary": "2-3 sentence plan overview",
+      "phases": [
+        {
+          "label": "Days 1-30",
+          "focus": "Phase focus area",
+          "goals": ["Goal 1","Goal 2","Goal 3"],
+          "quickWins": ["Quick win 1","Quick win 2"],
+          "deliverables": ["Deliverable 1","Deliverable 2"]
+        },
+        {
+          "label": "Days 31-60",
+          "focus": "Phase focus area",
+          "goals": ["Goal 1","Goal 2","Goal 3"],
+          "quickWins": ["Quick win 1"],
+          "deliverables": ["Deliverable 1","Deliverable 2"]
+        },
+        {
+          "label": "Days 61-90",
+          "focus": "Phase focus area",
+          "goals": ["Goal 1","Goal 2","Goal 3"],
+          "quickWins": ["Quick win 1"],
+          "deliverables": ["Deliverable 1","Deliverable 2"]
+        }
+      ],
+      "successMetrics": ["Metric 1","Metric 2","Metric 3"]
+    },
+    "months12": {
+      "title": "12-Month Growth Plan",
+      "leadershipNarrative": "1-2 sentence growth arc",
+      "quarters": [
+        {"label":"Q1","focus":"Focus area","goals":["Goal 1","Goal 2"],"milestones":["Milestone 1"],"metrics":["Metric 1"]},
+        {"label":"Q2","focus":"Focus area","goals":["Goal 1","Goal 2"],"milestones":["Milestone 1"],"metrics":["Metric 1"]},
+        {"label":"Q3","focus":"Focus area","goals":["Goal 1","Goal 2"],"milestones":["Milestone 1"],"metrics":["Metric 1"]},
+        {"label":"Q4","focus":"Focus area","goals":["Goal 1","Goal 2"],"milestones":["Milestone 1"],"metrics":["Metric 1"]}
+      ],
+      "successMetrics": ["Metric 1","Metric 2"]
+    },
+    "years2": {
+      "title": "2-Year Strategic Career Plan",
+      "year1": {"focus":"Focus","goals":["Goal 1","Goal 2"],"capabilitiesToBuild":["Capability 1"],"milestones":["Milestone 1"]},
+      "year2": {"focus":"Focus","goals":["Goal 1","Goal 2"],"capabilitiesToBuild":["Capability 1"],"milestones":["Milestone 1"]},
+      "longTermPositioning": "1-2 sentence career positioning statement",
+      "risksAndMitigations": [{"risk":"Risk 1","mitigation":"Mitigation 1"}]
+    }
+  },
+  "cv": {
+    "heading": "Cover Letter - Target Role",
+    "opening": "Dear Hiring Team,",
+    "body": [
+      "Opening paragraph referencing the specific role and company.",
+      "Middle paragraph highlighting 2-3 strongest qualifications tied to JD requirements.",
+      "Closing paragraph expressing enthusiasm and requesting next steps."
+    ],
+    "closing": "Thank you for your time and consideration.",
+    "tone": "professional",
+    "personalizationNotes": [],
+    "riskWarnings": []
   },
   "strategist_note": "2-3 sentences explaining what improved, why it matters, and where alignment increased"
 }
 
-Set summary_change to null if the summary already meets all constraints. Otherwise return {"original":"","improved":"","reason":"","why_it_matters":"","keywords_added":[],"placeholders":[],"delta_score":0,"affected_categories":[]} with the rewritten summary in "improved" (≤400 chars, 3-4 sentences, third person, no banned phrases). The "why_it_matters" field on summary_change should explain why the new summary improves recruiter scan / role fit (e.g. "Improves readability and matches recruiter expectations for quick scanning in senior data roles").
+Set summary_change to null if the summary already meets all constraints. Otherwise return {"original":"","improved":"","reason":"","why_it_matters":"","keywords_added":[],"placeholders":[],"delta_score":0,"affected_categories":[]} with the rewritten summary in "improved" (≤400 chars, 3-4 sentences, third person, no banned phrases).
 
 ════════════════════════════════════════════════════════════════
 FINAL QUALITY CHECK
@@ -2326,9 +2496,16 @@ Before returning:
 - Is at most 2 bullet rewrites per role?
 - Are all rewrites stronger in meaning — not just verb swaps?
 - Is nothing invented? (Every added fact is either in the source or a bracket placeholder.)
+- Does analysis.ats include matchedKeywords and missingKeywords?
+- Does plan include all three horizons (days90, months12, years2)?
+- Does cv.body have 3 tailored paragraphs?
+- Is salaryRange.low/mid/high null (never guessed)?
 
 If improvements feel too subtle, slightly increase clarity or impact — without violating any rules.`;
 
+        const { cvContext, plan_context, additional_details } = req.body || {};
+        const cvContextNote = cvContext ? `\n\nCV CONTEXT (use in cover letter):\n- Hiring Manager: ${cvContext.hiringManagerName || 'not specified'}\n- Why This Role: ${cvContext.whyThisRole || 'not specified'}\n- Tone Preference: ${cvContext.tonePreference || 'professional'}\n- Company Notes: ${cvContext.companyNotes || 'not specified'}\n- Extra Notes: ${cvContext.extraNotes || 'none'}` : '';
+        const planContextNote = plan_context ? `\n\nADDITIONAL PLAN CONTEXT: ${plan_context}` : '';
         const userPrompt = `Target Role: ${job_title || 'Not specified'}
 Target Company: ${company || 'Not specified'}
 
@@ -2336,12 +2513,13 @@ Job Description:
 ${job_description.toString().slice(0, 5000)}
 
 Current Resume (structured):
-${JSON.stringify(resume_data).slice(0, 10000)}
+${JSON.stringify(resume_data).slice(0, 9000)}
 
 Current Resume (readable):
-${resumeText.slice(0, 6000)}`;
+${resumeText.slice(0, 5000)}
+${cvContextNote}${planContextNote}${additional_details ? '\n\nADDITIONAL DETAILS: ' + additional_details : ''}`;
 
-        const result = await callOpenAI(apiKey, systemPrompt, userPrompt, 'gpt-4o', 5500, true, 0.2);
+        const result = await callOpenAI(apiKey, systemPrompt, userPrompt, 'gpt-4o', 14000, true, 0.2);
         const out = extractJSON(result);
         if (!out || !Array.isArray(out.candidate_changes)) {
             console.error('[Builder] optimize: unparseable AI response:', (result || '').slice(0, 500));
@@ -2410,10 +2588,59 @@ ${resumeText.slice(0, 6000)}`;
         };
 
         await deductAIUseServer(req);
+
+        // Build the enriched analysis — merge existing optimize analysis fields with the new extended shape
+        const rawAnalysis = out.analysis || {};
+        const enrichedAnalysis = Object.assign({}, rawAnalysis, {
+            resume_match_score: rawAnalysis.resume_match_score || rawAnalysis.overall_score || improved_score,
+            overall_score: rawAnalysis.overall_score || rawAnalysis.resume_match_score || improved_score,
+            status: rawAnalysis.status || (improved_score >= 85 ? 'Strong' : improved_score >= 75 ? 'Competitive' : improved_score >= 60 ? 'Borderline' : improved_score >= 45 ? 'Weak' : 'High Risk'),
+            interview_likelihood: rawAnalysis.interview_likelihood || (improved_score >= 75 ? 'Likely to get interview' : improved_score >= 60 ? 'May get interview with minor fixes' : 'Unlikely to get interview without changes'),
+            overall_assessment: rawAnalysis.overall_assessment || rawAnalysis.overall_summary || out.recruiter_first_impression || '',
+            score_breakdown: rawAnalysis.score_breakdown || {},
+            top_risks: rawAnalysis.top_risks || (rawAnalysis.riskProfile && rawAnalysis.riskProfile.topRisks) || [],
+            top_strengths: rawAnalysis.top_strengths || [],
+            top_fixes: rawAnalysis.top_fixes || (rawAnalysis.recommendations && rawAnalysis.recommendations.highestImpactFixes
+                ? rawAnalysis.recommendations.highestImpactFixes.map(f => ({ fix: f.fix, score_impact: f.expectedImpact || 3 }))
+                : []),
+            benchmark: rawAnalysis.benchmark || (rawAnalysis.candidateBenchmark ? {
+                top_candidate_patterns: rawAnalysis.candidateBenchmark.topCandidatePatterns || [],
+                matches: rawAnalysis.candidateBenchmark.whereUserMatches || [],
+                gaps: rawAnalysis.candidateBenchmark.whereUserFallsShort || []
+            } : {}),
+            ats: rawAnalysis.ats || {},
+            skillsIntel: rawAnalysis.skillsIntel || {},
+            marketIntel: Object.assign({ salaryRange: { low: null, mid: null, high: null, confidence: 'low', note: 'Estimated only. Live salary data is not connected.' } }, rawAnalysis.marketIntel || {}),
+            candidateBenchmark: rawAnalysis.candidateBenchmark || {},
+            interviewPrep: rawAnalysis.interviewPrep || {},
+            riskProfile: rawAnalysis.riskProfile || {},
+            recommendations: rawAnalysis.recommendations || {}
+        });
+        // Force salary null — never let the model return guessed salary data
+        if (enrichedAnalysis.marketIntel && enrichedAnalysis.marketIntel.salaryRange) {
+            enrichedAnalysis.marketIntel.salaryRange.low = null;
+            enrichedAnalysis.marketIntel.salaryRange.mid = null;
+            enrichedAnalysis.marketIntel.salaryRange.high = null;
+            enrichedAnalysis.marketIntel.salaryRange.note = 'Estimated only. Live salary data is not connected.';
+        }
+
+        // Normalize plan shape
+        const rawPlan = out.plan || {};
+        const normalizedPlan = {
+            horizon: 'combined',
+            days90: rawPlan.days90 || {},
+            months12: rawPlan.months12 || {},
+            years2: rawPlan.years2 || {}
+        };
+
+        // CV / cover letter
+        const cv = out.cv || {};
+
         res.json({
             success: true,
             original_score,
             improved_score,
+            current_score_used: original_score,
             delta,
             decision: out.decision || 'BORDERLINE',
             recruiter_first_impression: out.recruiter_first_impression || '',
@@ -2423,8 +2650,37 @@ ${resumeText.slice(0, 6000)}`;
             skills_reordered: out.skills_reordered || [],
             skills_added: out.skills_added || [],
             summary_stats,
-            analysis: out.analysis || {},
-            strategist_note: out.strategist_note || ''
+            analysis: enrichedAnalysis,
+            analysisData: enrichedAnalysis,
+            strategist_note: out.strategist_note || '',
+            // Full plan package
+            plan: normalizedPlan,
+            plan_phases: (normalizedPlan.days90 && normalizedPlan.days90.phases) || [],
+            days90: normalizedPlan.days90,
+            months12: normalizedPlan.months12,
+            years2: normalizedPlan.years2,
+            success_summary: (normalizedPlan.days90 && normalizedPlan.days90.executiveSummary) || '',
+            success_criteria: (normalizedPlan.days90 && normalizedPlan.days90.successMetrics) || [],
+            kpis: (normalizedPlan.months12 && normalizedPlan.months12.successMetrics) || [],
+            // CV
+            cv,
+            // Backward-compat: generated alias for plan data (for legacy renderers that read data.generated)
+            generated: {
+                plan_phases: (normalizedPlan.days90 && normalizedPlan.days90.phases) || [],
+                days90: normalizedPlan.days90,
+                months12: normalizedPlan.months12,
+                years2: normalizedPlan.years2,
+                success_summary: (normalizedPlan.days90 && normalizedPlan.days90.executiveSummary) || '',
+                success_criteria: (normalizedPlan.days90 && normalizedPlan.days90.successMetrics) || [],
+                kpis: (normalizedPlan.months12 && normalizedPlan.months12.successMetrics) || []
+            },
+            optimizationSession: {
+                beforeScore: original_score,
+                afterScore: improved_score,
+                acceptedChanges: accepted,
+                discardedChanges: discarded,
+                generatedAt: new Date().toISOString()
+            }
         });
     } catch (err) {
         console.error('[Builder] optimize error:', err.message);
