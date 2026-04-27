@@ -2554,48 +2554,71 @@ SALARY RULE: salaryRange.low/mid/high must always be null. Always set note to "E
     "horizon": "combined",
     "days90": {
       "title": "First 90 Days",
-      "executiveSummary": "2-3 sentence plan overview",
+      "executiveSummary": "2-3 sentence plan overview that frames the early-tenure strategy.",
       "phases": [
         {
           "label": "Days 1-30",
-          "focus": "Phase focus area",
+          "focus": "Phase focus area (1 short phrase)",
+          "objective": "1-2 sentence objective explaining what success looks like for this phase.",
           "goals": ["Goal 1","Goal 2","Goal 3"],
           "quickWins": ["Quick win 1","Quick win 2"],
-          "deliverables": ["Deliverable 1","Deliverable 2"]
+          "deliverables": ["Deliverable 1","Deliverable 2"],
+          "milestones": ["Milestone 1","Milestone 2"],
+          "tools": ["Tool or framework 1","Tool or framework 2"],
+          "metrics": ["Metric 1","Metric 2"],
+          "execValue": "1-2 sentence statement of executive / business value delivered in this phase."
         },
         {
           "label": "Days 31-60",
           "focus": "Phase focus area",
+          "objective": "1-2 sentence objective",
           "goals": ["Goal 1","Goal 2","Goal 3"],
-          "quickWins": ["Quick win 1"],
-          "deliverables": ["Deliverable 1","Deliverable 2"]
+          "quickWins": ["Quick win 1","Quick win 2"],
+          "deliverables": ["Deliverable 1","Deliverable 2"],
+          "milestones": ["Milestone 1","Milestone 2"],
+          "tools": ["Tool 1","Tool 2"],
+          "metrics": ["Metric 1","Metric 2"],
+          "execValue": "1-2 sentence executive value statement"
         },
         {
           "label": "Days 61-90",
           "focus": "Phase focus area",
+          "objective": "1-2 sentence objective",
           "goals": ["Goal 1","Goal 2","Goal 3"],
-          "quickWins": ["Quick win 1"],
-          "deliverables": ["Deliverable 1","Deliverable 2"]
+          "quickWins": ["Quick win 1","Quick win 2"],
+          "deliverables": ["Deliverable 1","Deliverable 2"],
+          "milestones": ["Milestone 1","Milestone 2"],
+          "tools": ["Tool 1","Tool 2"],
+          "metrics": ["Metric 1","Metric 2"],
+          "execValue": "1-2 sentence executive value statement"
         }
       ],
-      "successMetrics": ["Metric 1","Metric 2","Metric 3"]
+      "successMetrics": ["Metric 1","Metric 2","Metric 3"],
+      "successCriteria": ["What success looks like criterion 1","Criterion 2","Criterion 3"]
     },
     "months12": {
       "title": "12-Month Growth Plan",
-      "leadershipNarrative": "1-2 sentence growth arc",
-      "quarters": [
-        {"label":"Q1","focus":"Focus area","goals":["Goal 1","Goal 2"],"milestones":["Milestone 1"],"metrics":["Metric 1"]},
-        {"label":"Q2","focus":"Focus area","goals":["Goal 1","Goal 2"],"milestones":["Milestone 1"],"metrics":["Metric 1"]},
-        {"label":"Q3","focus":"Focus area","goals":["Goal 1","Goal 2"],"milestones":["Milestone 1"],"metrics":["Metric 1"]},
-        {"label":"Q4","focus":"Focus area","goals":["Goal 1","Goal 2"],"milestones":["Milestone 1"],"metrics":["Metric 1"]}
+      "leadershipNarrative": "1-2 sentence growth arc tying the year together.",
+      "executiveSummary": "2-3 sentence plan overview",
+      "phases": [
+        {"label":"Q1 (Months 1-3)","focus":"Focus area","objective":"1-2 sentence objective","goals":["Goal 1","Goal 2","Goal 3"],"quickWins":["Quick win 1","Quick win 2"],"deliverables":["Deliverable 1","Deliverable 2"],"milestones":["Milestone 1"],"tools":["Tool 1","Tool 2"],"metrics":["Metric 1","Metric 2"],"execValue":"1-2 sentence executive value"},
+        {"label":"Q2 (Months 4-6)","focus":"Focus area","objective":"1-2 sentence objective","goals":["Goal 1","Goal 2","Goal 3"],"quickWins":["Quick win 1","Quick win 2"],"deliverables":["Deliverable 1","Deliverable 2"],"milestones":["Milestone 1"],"tools":["Tool 1","Tool 2"],"metrics":["Metric 1","Metric 2"],"execValue":"1-2 sentence executive value"},
+        {"label":"Q3 (Months 7-9)","focus":"Focus area","objective":"1-2 sentence objective","goals":["Goal 1","Goal 2","Goal 3"],"quickWins":["Quick win 1","Quick win 2"],"deliverables":["Deliverable 1","Deliverable 2"],"milestones":["Milestone 1"],"tools":["Tool 1","Tool 2"],"metrics":["Metric 1","Metric 2"],"execValue":"1-2 sentence executive value"},
+        {"label":"Q4 (Months 10-12)","focus":"Focus area","objective":"1-2 sentence objective","goals":["Goal 1","Goal 2","Goal 3"],"quickWins":["Quick win 1","Quick win 2"],"deliverables":["Deliverable 1","Deliverable 2"],"milestones":["Milestone 1"],"tools":["Tool 1","Tool 2"],"metrics":["Metric 1","Metric 2"],"execValue":"1-2 sentence executive value"}
       ],
-      "successMetrics": ["Metric 1","Metric 2"]
+      "successMetrics": ["Metric 1","Metric 2","Metric 3"],
+      "successCriteria": ["Criterion 1","Criterion 2","Criterion 3"]
     },
     "years2": {
       "title": "2-Year Strategic Career Plan",
-      "year1": {"focus":"Focus","goals":["Goal 1","Goal 2"],"capabilitiesToBuild":["Capability 1"],"milestones":["Milestone 1"]},
-      "year2": {"focus":"Focus","goals":["Goal 1","Goal 2"],"capabilitiesToBuild":["Capability 1"],"milestones":["Milestone 1"]},
       "longTermPositioning": "1-2 sentence career positioning statement",
+      "executiveSummary": "2-3 sentence multi-year arc.",
+      "phases": [
+        {"label":"Year 1 - Establish & Scale","focus":"Focus area","objective":"1-2 sentence objective","goals":["Goal 1","Goal 2","Goal 3"],"quickWins":["Quick win 1","Quick win 2"],"deliverables":["Deliverable 1","Deliverable 2"],"milestones":["Milestone 1","Milestone 2"],"tools":["Tool 1","Tool 2"],"metrics":["Metric 1","Metric 2"],"execValue":"1-2 sentence executive value"},
+        {"label":"Year 2 - Expand & Lead","focus":"Focus area","objective":"1-2 sentence objective","goals":["Goal 1","Goal 2","Goal 3"],"quickWins":["Quick win 1","Quick win 2"],"deliverables":["Deliverable 1","Deliverable 2"],"milestones":["Milestone 1","Milestone 2"],"tools":["Tool 1","Tool 2"],"metrics":["Metric 1","Metric 2"],"execValue":"1-2 sentence executive value"}
+      ],
+      "successMetrics": ["Metric 1","Metric 2","Metric 3"],
+      "successCriteria": ["Criterion 1","Criterion 2","Criterion 3"],
       "risksAndMitigations": [{"risk":"Risk 1","mitigation":"Mitigation 1"}]
     }
   },
@@ -2825,31 +2848,45 @@ ${cvContextNote}${planContextNote}${additional_details ? '\n\nADDITIONAL DETAILS
                 const _str = v => (v == null) ? '' : (typeof v === 'string' ? v : (v.text || v.action || v.task || v.title || v.description || JSON.stringify(v)));
                 const title = _str(p.title || p.label || '');
                 const description = _str(p.description || p.focus || p.summary || '');
+                const objective = _str(p.objective || p.summary || p.description || p.focus || '');
+                const execValue = _str(p.execValue || p.exec_value || p.executiveValue || p.value || p.businessValue || '');
                 const goals = Array.isArray(p.goals) ? p.goals.map(_str).filter(Boolean) : [];
-                const quickWins = Array.isArray(p.quickWins) ? p.quickWins.map(_str).filter(Boolean) : [];
+                const quickWins = Array.isArray(p.quickWins) ? p.quickWins.map(_str).filter(Boolean)
+                                : (Array.isArray(p.quick_wins) ? p.quick_wins.map(_str).filter(Boolean) : []);
                 const deliverables = Array.isArray(p.deliverables) ? p.deliverables.map(_str).filter(Boolean) : [];
                 const tasks = Array.isArray(p.tasks) ? p.tasks.map(_str).filter(Boolean) : [];
                 const milestones = Array.isArray(p.milestones) ? p.milestones.map(_str).filter(Boolean) : [];
+                const tools = Array.isArray(p.tools) ? p.tools.map(_str).filter(Boolean)
+                            : (Array.isArray(p.tools_and_technology) ? p.tools_and_technology.map(_str).filter(Boolean) : []);
+                const capabilities = Array.isArray(p.capabilitiesToBuild) ? p.capabilitiesToBuild.map(_str).filter(Boolean) : [];
                 let actions = Array.isArray(p.actions) ? p.actions.map(_str).filter(Boolean) : [];
                 if (!actions.length) {
-                    actions = goals.concat(quickWins, deliverables, tasks, milestones).filter(Boolean);
+                    actions = goals.concat(quickWins, deliverables, tasks).filter(Boolean);
                 }
+                // Backfill quickWins from capabilitiesToBuild (legacy 2-year shape)
+                const finalQuickWins = quickWins.length ? quickWins : capabilities;
                 const metrics = Array.isArray(p.metrics) ? p.metrics.map(_str).filter(Boolean)
                               : (Array.isArray(p.kpis) ? p.kpis.map(_str).filter(Boolean) : []);
                 return {
                     // Original prompt-shape keys (frontend _normalizePlanMilestones reads these)
                     label: p.label || title,
                     focus: p.focus || description,
+                    objective,
                     goals,
-                    quickWins,
+                    quickWins: finalQuickWins,
                     deliverables,
+                    milestones,
+                    tools,
+                    execValue,
                     // Generic shape keys (legacy renderers + populateRoleEditorsFromState read these)
                     title,
                     description,
                     actions,
-                    metrics
+                    metrics,
+                    // Legacy renderer alias for execValue (read by g.plan_phases preview)
+                    exec_value: execValue
                 };
-            }).filter(p => p.title || p.description || p.actions.length || (p.goals && p.goals.length) || (p.deliverables && p.deliverables.length));
+            }).filter(p => p.title || p.description || p.actions.length || (p.goals && p.goals.length) || (p.deliverables && p.deliverables.length) || (p.milestones && p.milestones.length));
             out.phases = phases;
             return out;
         }
