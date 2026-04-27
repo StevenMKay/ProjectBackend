@@ -1506,6 +1506,100 @@ async function callOpenAIWithImages(apiKey, systemPrompt, textContent, base64Png
     return data.choices[0].message.content;
 }
 
+// =====================================================================
+// Resume extraction helpers
+// =====================================================================
+// Multi-column PDFs frequently cause the AI to associate Job #2 bullets
+// with BOTH Job #1 and Job #2 because sidebar content (Education / Skills /
+// Contact) appears between Job #2's header and its bullets. The prompt
+// improvements below help, but they are not deterministic -- so we also run
+// a post-parse cleanup that removes any bullet text duplicated across
+// multiple experience entries, keeping it on the LATER role (which is
+// where it almost always belongs in document flow).
+
+function normalizeBulletTextForCompare(text) {
+    return String(text || '')
+        .toLowerCase()
+        .replace(/^[•\-\*\u2022\s]+/, '')
+        .replace(/\s+/g, ' ')
+        .replace(/[^\w%$# ]+/g, '')
+        .trim();
+}
+
+function cleanExperienceBulletDupes(experience = []) {
+    if (!Array.isArray(experience)) return [];
+
+    const cleaned = experience.map(role => ({
+        ...role,
+        bullets: Array.isArray(role.bullets)
+            ? role.bullets.filter(Boolean).map(b => String(b).trim()).filter(Boolean)
+            : []
+    }));
+
+    const seen = new Map();
+
+    cleaned.forEach((role, roleIndex) => {
+        role.bullets.forEach((bullet, bulletIndex) => {
+            const key = normalizeBulletTextForCompare(bullet);
+            if (!key || key.length < 18) return;
+            if (!seen.has(key)) seen.set(key, []);
+            seen.get(key).push({ roleIndex, bulletIndex, bullet });
+        });
+    });
+
+    // If duplicated across roles, keep the later role.
+    // This fixes Job #2 bullets duplicated at the end of Job #1.
+    for (const [, hits] of seen.entries()) {
+        if (hits.length <= 1) continue;
+        const keepRoleIndex = Math.max(...hits.map(h => h.roleIndex));
+        hits.forEach(h => {
+            if (h.roleIndex !== keepRoleIndex) {
+                cleaned[h.roleIndex].bullets[h.bulletIndex] = null;
+            }
+        });
+    }
+
+    cleaned.forEach(role => {
+        role.bullets = role.bullets.filter(Boolean);
+    });
+
+    return cleaned;
+}
+
+function findCrossRoleBulletDupes(experience = []) {
+    const seen = new Map();
+    const dupes = [];
+
+    (Array.isArray(experience) ? experience : []).forEach((role, roleIndex) => {
+        (role.bullets || []).forEach((bullet, bulletIndex) => {
+            const key = normalizeBulletTextForCompare(bullet);
+            if (!key || key.length < 18) return;
+
+            if (seen.has(key)) {
+                dupes.push({
+                    text: bullet,
+                    first: seen.get(key),
+                    duplicate: {
+                        roleIndex,
+                        bulletIndex,
+                        title: role.title || '',
+                        company: role.company || ''
+                    }
+                });
+            } else {
+                seen.set(key, {
+                    roleIndex,
+                    bulletIndex,
+                    title: role.title || '',
+                    company: role.company || ''
+                });
+            }
+        });
+    });
+
+    return dupes;
+}
+
 // POST /api/builder/parse-resume
 // Accepts multipart: file OR text field
 app.post('/api/builder/parse-resume', requireBuilderAuth, checkBuilderQuota, upload.single('file'), async (req, res) => {
@@ -1573,6 +1667,27 @@ BULLET ASSIGNMENT STRATEGY:
 3. Second pass: for each bullet point or accomplishment, assign it to the job header that IMMEDIATELY PRECEDES it in the document flow. If sidebar text (skills, contact info, education) is interleaved between a job header and its bullets, skip over the sidebar text and still assign the bullets to the preceding job header.
 4. NEVER assign a bullet to a role that comes later in the document or that has a date range inconsistent with the bullet's context.
 5. If unsure, use the date range and job context to determine the correct assignment.
+
+CROSS-ROLE BULLET DEDUPLICATION (critical -- prevents Job #2 bullets from being copied into Job #1):
+A bullet can belong to only one job. Never duplicate the same bullet across multiple experience entries.
+
+When assigning bullets:
+- Build the complete ordered list of job headers first.
+- Once a later job header is detected, all role-specific text that follows belongs to that later job unless it is clearly a sidebar/global section.
+- If Education, Skills, Certifications, or Contact Info appear between a job header and its bullets, treat those as sidebar interruptions and continue assigning the later bullets to the most recent job header.
+- Do not append bullets from a later job to an earlier job "just in case."
+- If the same bullet seems to fit multiple jobs, keep it only under the role whose header most recently precedes it in document flow.
+- After extraction, compare bullets globally across all experience entries. If a bullet appears in more than one job, remove it from the earlier job and keep it in the later/more specific job.
+
+For multi-column layouts:
+If the text shows:
+  Job 1 header
+  Job 1 bullets
+  Job 2 header
+  sidebar sections like Education/Skills
+  Job 2 summary/bullets
+Then Job 2 summary/bullets must belong only to Job 2, not Job 1.
+
 If a field cannot be determined, use an empty string or empty array. Extract every detail available — do not skip sections.
 
 ADDITIONAL SIGNAL EXTRACTION (append only — do not change the core schema above):
@@ -1690,6 +1805,24 @@ VERIFICATION PASS (run before returning JSON):
                 _len(resumeData.leadership_engagement), _len(resumeData.volunteer_experience),
                 _len(resumeData.projects));
         } catch (_) { /* diagnostic only */ }
+
+        // PATCH: deterministic post-parse cleanup. Even with the strengthened
+        // prompt, multi-column PDFs occasionally produce Job #2 bullets
+        // duplicated into Job #1. Strip exact-text duplicates across roles
+        // and keep them only on the later (most-specific) role.
+        if (resumeData && Array.isArray(resumeData.experience)) {
+            const before = findCrossRoleBulletDupes(resumeData.experience);
+            resumeData.experience = cleanExperienceBulletDupes(resumeData.experience);
+            if (before.length) {
+                console.log('[parse-resume] cleaned %d cross-role duplicate bullet(s)', before.length);
+            }
+            if (process.env.RB_DEBUG === 'true') {
+                console.log(
+                    '[extract] cross-role bullet dupes remaining:',
+                    findCrossRoleBulletDupes(resumeData.experience)
+                );
+            }
+        }
 
         await deductAIUseServer(req);
         res.json({ resume_data: resumeData, raw_text: resumeText });
