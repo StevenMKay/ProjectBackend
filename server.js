@@ -2758,12 +2758,87 @@ ${cvContextNote}${planContextNote}${additional_details ? '\n\nADDITIONAL DETAILS
         }
 
         // Normalize plan shape
+        // PATCH (2026-04-27): the AI sometimes emits horizon data under
+        // alternative keys (weeklyBreakdown / quarters / year1+year2 / goals)
+        // instead of `phases`. Coerce every horizon so `.phases` is always a
+        // populated array of {title, description, actions, metrics} objects.
+        // The frontend's _normalizePlanMilestones consumes this shape.
+        function _coerceHorizonPhases(h, kind) {
+            if (!h || typeof h !== 'object') return { phases: [] };
+            const out = Object.assign({}, h);
+            let phases = Array.isArray(out.phases) ? out.phases.slice() : [];
+            if (!phases.length && Array.isArray(out.weeklyBreakdown)) {
+                phases = out.weeklyBreakdown.map(w => ({
+                    title: w.title || w.label || w.weeks || w.week || '',
+                    description: w.description || w.summary || w.focus || '',
+                    actions: w.actions || w.tasks || w.deliverables || w.goals || [],
+                    metrics: w.metrics || w.kpis || w.successMetrics || []
+                }));
+            }
+            if (!phases.length && Array.isArray(out.weeks)) {
+                phases = out.weeks.map(w => ({
+                    title: w.title || w.label || ('Week ' + (w.week || w.number || '')),
+                    description: w.description || w.summary || w.focus || '',
+                    actions: w.actions || w.tasks || w.deliverables || w.goals || [],
+                    metrics: w.metrics || w.kpis || []
+                }));
+            }
+            if (!phases.length && Array.isArray(out.quarters)) {
+                phases = out.quarters.map(q => ({
+                    title: q.title || q.label || q.quarter || '',
+                    description: q.description || q.summary || q.focus || '',
+                    actions: q.actions || q.tasks || q.deliverables || q.goals || [],
+                    metrics: q.metrics || q.kpis || q.successMetrics || []
+                }));
+            }
+            if (!phases.length && kind === 'years2') {
+                const buckets = [];
+                if (out.year1) buckets.push(Object.assign({ _label: 'Year 1' }, out.year1));
+                if (out.year2) buckets.push(Object.assign({ _label: 'Year 2' }, out.year2));
+                if (buckets.length) {
+                    phases = buckets.map(y => ({
+                        title: y.title || y._label || '',
+                        description: y.description || y.summary || y.focus || y.executiveSummary || '',
+                        actions: y.actions || y.tasks || y.deliverables || y.goals || y.milestones || [],
+                        metrics: y.metrics || y.kpis || y.successMetrics || []
+                    }));
+                }
+            }
+            if (!phases.length && Array.isArray(out.goals)) {
+                phases = out.goals.map((g, i) => ({
+                    title: (typeof g === 'string') ? ('Goal ' + (i + 1)) : (g.title || g.label || ('Goal ' + (i + 1))),
+                    description: (typeof g === 'string') ? g : (g.description || g.summary || ''),
+                    actions: (typeof g === 'string') ? [] : (g.actions || g.tasks || g.deliverables || []),
+                    metrics: (typeof g === 'string') ? [] : (g.metrics || g.kpis || [])
+                }));
+            }
+            if (!phases.length && Array.isArray(out.milestones)) {
+                phases = out.milestones.map(m => ({
+                    title: m.title || m.label || '',
+                    description: m.description || m.summary || '',
+                    actions: m.actions || m.tasks || m.deliverables || [],
+                    metrics: m.metrics || m.kpis || []
+                }));
+            }
+            // Normalize each phase's action/metric arrays to string[] of plain text
+            phases = phases.map(p => {
+                const _str = v => (v == null) ? '' : (typeof v === 'string' ? v : (v.text || v.action || v.task || v.title || v.description || JSON.stringify(v)));
+                return {
+                    title: _str(p.title),
+                    description: _str(p.description),
+                    actions: Array.isArray(p.actions) ? p.actions.map(_str).filter(Boolean) : [],
+                    metrics: Array.isArray(p.metrics) ? p.metrics.map(_str).filter(Boolean) : []
+                };
+            }).filter(p => p.title || p.description || p.actions.length);
+            out.phases = phases;
+            return out;
+        }
         const rawPlan = out.plan || {};
         const normalizedPlan = {
             horizon: 'combined',
-            days90: rawPlan.days90 || {},
-            months12: rawPlan.months12 || {},
-            years2: rawPlan.years2 || {}
+            days90: _coerceHorizonPhases(rawPlan.days90 || {}, 'days90'),
+            months12: _coerceHorizonPhases(rawPlan.months12 || {}, 'months12'),
+            years2: _coerceHorizonPhases(rawPlan.years2 || {}, 'years2')
         };
 
         // CV / cover letter
