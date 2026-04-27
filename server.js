@@ -2434,6 +2434,14 @@ Return STRICT JSON (no markdown fences) with this exact shape. All sections are 
 
 SALARY RULE: salaryRange.low/mid/high must always be null. Always set note to "Estimated only. Live salary data is not connected." Do not guess salary.
 
+PLAN RULES (READ CAREFULLY):
+- Every horizon (days90, months12, years2) MUST populate phases[] with goals, quickWins, deliverables, milestones, tools, metrics, stakeholders, risks, communicationPlan, and execValue. Do NOT leave arrays empty — provide 2–4 concrete, role-specific items each.
+- successMetrics MUST be an array of OBJECTS shaped {name, baseline, target, measurement}. Do NOT return plain strings here. baseline may be "TBD" or "Current state" if unknown, but target and measurement must be specific (e.g. target: "30% reduction in cycle time", measurement: "Tracked monthly via JIRA cycle-time dashboard"). Aim for 3–5 KPIs per horizon.
+- stakeholders[] MUST be objects shaped {name, ask}. name is a role/function (e.g. "VP Product"), ask is a one-line ask (e.g. "Quarterly roadmap alignment").
+- risks[] MUST be objects shaped {risk, mitigation}.
+- successCriteria[] is an array of plain-text outcome statements (3–5 items per horizon) describing what "success at this horizon" looks like.
+- Tailor every item to the target role, company, and seniority — generic filler ("Build relationships", "Learn the team") is INVALID.
+
 {
   "original_score": 0,
   "decision": "PASS|BORDERLINE|REJECT",
@@ -2566,6 +2574,9 @@ SALARY RULE: salaryRange.low/mid/high must always be null. Always set note to "E
           "milestones": ["Milestone 1","Milestone 2"],
           "tools": ["Tool or framework 1","Tool or framework 2"],
           "metrics": ["Metric 1","Metric 2"],
+          "stakeholders": [{"name":"Role / function","ask":"What you need from them"}],
+          "risks": [{"risk":"Risk 1","mitigation":"Mitigation 1"}],
+          "communicationPlan": "1 sentence on cadence/audience for updates this phase.",
           "execValue": "1-2 sentence statement of executive / business value delivered in this phase."
         },
         {
@@ -2578,6 +2589,9 @@ SALARY RULE: salaryRange.low/mid/high must always be null. Always set note to "E
           "milestones": ["Milestone 1","Milestone 2"],
           "tools": ["Tool 1","Tool 2"],
           "metrics": ["Metric 1","Metric 2"],
+          "stakeholders": [{"name":"Role","ask":"What you need"}],
+          "risks": [{"risk":"Risk 1","mitigation":"Mitigation 1"}],
+          "communicationPlan": "1 sentence cadence",
           "execValue": "1-2 sentence executive value statement"
         },
         {
@@ -2590,10 +2604,15 @@ SALARY RULE: salaryRange.low/mid/high must always be null. Always set note to "E
           "milestones": ["Milestone 1","Milestone 2"],
           "tools": ["Tool 1","Tool 2"],
           "metrics": ["Metric 1","Metric 2"],
+          "stakeholders": [{"name":"Role","ask":"What you need"}],
+          "risks": [{"risk":"Risk 1","mitigation":"Mitigation 1"}],
+          "communicationPlan": "1 sentence cadence",
           "execValue": "1-2 sentence executive value statement"
         }
       ],
-      "successMetrics": ["Metric 1","Metric 2","Metric 3"],
+      "successMetrics": [
+        {"name":"KPI name","baseline":"Baseline today (use 'TBD' if unknown)","target":"Target value","measurement":"How / where it's measured"}
+      ],
       "successCriteria": ["What success looks like criterion 1","Criterion 2","Criterion 3"]
     },
     "months12": {
@@ -2601,12 +2620,14 @@ SALARY RULE: salaryRange.low/mid/high must always be null. Always set note to "E
       "leadershipNarrative": "1-2 sentence growth arc tying the year together.",
       "executiveSummary": "2-3 sentence plan overview",
       "phases": [
-        {"label":"Q1 (Months 1-3)","focus":"Focus area","objective":"1-2 sentence objective","goals":["Goal 1","Goal 2","Goal 3"],"quickWins":["Quick win 1","Quick win 2"],"deliverables":["Deliverable 1","Deliverable 2"],"milestones":["Milestone 1"],"tools":["Tool 1","Tool 2"],"metrics":["Metric 1","Metric 2"],"execValue":"1-2 sentence executive value"},
-        {"label":"Q2 (Months 4-6)","focus":"Focus area","objective":"1-2 sentence objective","goals":["Goal 1","Goal 2","Goal 3"],"quickWins":["Quick win 1","Quick win 2"],"deliverables":["Deliverable 1","Deliverable 2"],"milestones":["Milestone 1"],"tools":["Tool 1","Tool 2"],"metrics":["Metric 1","Metric 2"],"execValue":"1-2 sentence executive value"},
-        {"label":"Q3 (Months 7-9)","focus":"Focus area","objective":"1-2 sentence objective","goals":["Goal 1","Goal 2","Goal 3"],"quickWins":["Quick win 1","Quick win 2"],"deliverables":["Deliverable 1","Deliverable 2"],"milestones":["Milestone 1"],"tools":["Tool 1","Tool 2"],"metrics":["Metric 1","Metric 2"],"execValue":"1-2 sentence executive value"},
-        {"label":"Q4 (Months 10-12)","focus":"Focus area","objective":"1-2 sentence objective","goals":["Goal 1","Goal 2","Goal 3"],"quickWins":["Quick win 1","Quick win 2"],"deliverables":["Deliverable 1","Deliverable 2"],"milestones":["Milestone 1"],"tools":["Tool 1","Tool 2"],"metrics":["Metric 1","Metric 2"],"execValue":"1-2 sentence executive value"}
+        {"label":"Q1 (Months 1-3)","focus":"Focus area","objective":"1-2 sentence objective","goals":["Goal 1","Goal 2","Goal 3"],"quickWins":["Quick win 1","Quick win 2"],"deliverables":["Deliverable 1","Deliverable 2"],"milestones":["Milestone 1"],"tools":["Tool 1","Tool 2"],"metrics":["Metric 1","Metric 2"],"stakeholders":[{"name":"Role","ask":"Need"}],"risks":[{"risk":"Risk 1","mitigation":"Mitigation 1"}],"communicationPlan":"1 sentence cadence","execValue":"1-2 sentence executive value"},
+        {"label":"Q2 (Months 4-6)","focus":"Focus area","objective":"1-2 sentence objective","goals":["Goal 1","Goal 2","Goal 3"],"quickWins":["Quick win 1","Quick win 2"],"deliverables":["Deliverable 1","Deliverable 2"],"milestones":["Milestone 1"],"tools":["Tool 1","Tool 2"],"metrics":["Metric 1","Metric 2"],"stakeholders":[{"name":"Role","ask":"Need"}],"risks":[{"risk":"Risk 1","mitigation":"Mitigation 1"}],"communicationPlan":"1 sentence cadence","execValue":"1-2 sentence executive value"},
+        {"label":"Q3 (Months 7-9)","focus":"Focus area","objective":"1-2 sentence objective","goals":["Goal 1","Goal 2","Goal 3"],"quickWins":["Quick win 1","Quick win 2"],"deliverables":["Deliverable 1","Deliverable 2"],"milestones":["Milestone 1"],"tools":["Tool 1","Tool 2"],"metrics":["Metric 1","Metric 2"],"stakeholders":[{"name":"Role","ask":"Need"}],"risks":[{"risk":"Risk 1","mitigation":"Mitigation 1"}],"communicationPlan":"1 sentence cadence","execValue":"1-2 sentence executive value"},
+        {"label":"Q4 (Months 10-12)","focus":"Focus area","objective":"1-2 sentence objective","goals":["Goal 1","Goal 2","Goal 3"],"quickWins":["Quick win 1","Quick win 2"],"deliverables":["Deliverable 1","Deliverable 2"],"milestones":["Milestone 1"],"tools":["Tool 1","Tool 2"],"metrics":["Metric 1","Metric 2"],"stakeholders":[{"name":"Role","ask":"Need"}],"risks":[{"risk":"Risk 1","mitigation":"Mitigation 1"}],"communicationPlan":"1 sentence cadence","execValue":"1-2 sentence executive value"}
       ],
-      "successMetrics": ["Metric 1","Metric 2","Metric 3"],
+      "successMetrics": [
+        {"name":"KPI name","baseline":"Baseline","target":"Target","measurement":"How measured"}
+      ],
       "successCriteria": ["Criterion 1","Criterion 2","Criterion 3"]
     },
     "years2": {
@@ -2614,10 +2635,12 @@ SALARY RULE: salaryRange.low/mid/high must always be null. Always set note to "E
       "longTermPositioning": "1-2 sentence career positioning statement",
       "executiveSummary": "2-3 sentence multi-year arc.",
       "phases": [
-        {"label":"Year 1 - Establish & Scale","focus":"Focus area","objective":"1-2 sentence objective","goals":["Goal 1","Goal 2","Goal 3"],"quickWins":["Quick win 1","Quick win 2"],"deliverables":["Deliverable 1","Deliverable 2"],"milestones":["Milestone 1","Milestone 2"],"tools":["Tool 1","Tool 2"],"metrics":["Metric 1","Metric 2"],"execValue":"1-2 sentence executive value"},
-        {"label":"Year 2 - Expand & Lead","focus":"Focus area","objective":"1-2 sentence objective","goals":["Goal 1","Goal 2","Goal 3"],"quickWins":["Quick win 1","Quick win 2"],"deliverables":["Deliverable 1","Deliverable 2"],"milestones":["Milestone 1","Milestone 2"],"tools":["Tool 1","Tool 2"],"metrics":["Metric 1","Metric 2"],"execValue":"1-2 sentence executive value"}
+        {"label":"Year 1 - Establish & Scale","focus":"Focus area","objective":"1-2 sentence objective","goals":["Goal 1","Goal 2","Goal 3"],"quickWins":["Quick win 1","Quick win 2"],"deliverables":["Deliverable 1","Deliverable 2"],"milestones":["Milestone 1","Milestone 2"],"tools":["Tool 1","Tool 2"],"metrics":["Metric 1","Metric 2"],"stakeholders":[{"name":"Role","ask":"Need"}],"risks":[{"risk":"Risk 1","mitigation":"Mitigation 1"}],"communicationPlan":"1 sentence cadence","execValue":"1-2 sentence executive value"},
+        {"label":"Year 2 - Expand & Lead","focus":"Focus area","objective":"1-2 sentence objective","goals":["Goal 1","Goal 2","Goal 3"],"quickWins":["Quick win 1","Quick win 2"],"deliverables":["Deliverable 1","Deliverable 2"],"milestones":["Milestone 1","Milestone 2"],"tools":["Tool 1","Tool 2"],"metrics":["Metric 1","Metric 2"],"stakeholders":[{"name":"Role","ask":"Need"}],"risks":[{"risk":"Risk 1","mitigation":"Mitigation 1"}],"communicationPlan":"1 sentence cadence","execValue":"1-2 sentence executive value"}
       ],
-      "successMetrics": ["Metric 1","Metric 2","Metric 3"],
+      "successMetrics": [
+        {"name":"KPI name","baseline":"Baseline","target":"Target","measurement":"How measured"}
+      ],
       "successCriteria": ["Criterion 1","Criterion 2","Criterion 3"],
       "risksAndMitigations": [{"risk":"Risk 1","mitigation":"Mitigation 1"}]
     }
@@ -2867,6 +2890,19 @@ ${cvContextNote}${planContextNote}${additional_details ? '\n\nADDITIONAL DETAILS
                 const finalQuickWins = quickWins.length ? quickWins : capabilities;
                 const metrics = Array.isArray(p.metrics) ? p.metrics.map(_str).filter(Boolean)
                               : (Array.isArray(p.kpis) ? p.kpis.map(_str).filter(Boolean) : []);
+                // Stakeholders: accept array of {name, ask} or plain strings.
+                const stakeholders = Array.isArray(p.stakeholders) ? p.stakeholders.map(s => {
+                    if (s == null) return null;
+                    if (typeof s === 'string') return { name: s, ask: '' };
+                    return { name: _str(s.name || s.role || s.title || s.who || ''), ask: _str(s.ask || s.need || s.what || s.description || '') };
+                }).filter(s => s && (s.name || s.ask)) : [];
+                // Risks: accept array of {risk, mitigation} or plain strings.
+                const risks = Array.isArray(p.risks) ? p.risks.map(r => {
+                    if (r == null) return null;
+                    if (typeof r === 'string') return { risk: r, mitigation: '' };
+                    return { risk: _str(r.risk || r.title || r.name || r.description || ''), mitigation: _str(r.mitigation || r.fix || r.response || r.plan || '') };
+                }).filter(r => r && (r.risk || r.mitigation)) : [];
+                const communicationPlan = _str(p.communicationPlan || p.communication_plan || p.cadence || '');
                 return {
                     // Original prompt-shape keys (frontend _normalizePlanMilestones reads these)
                     label: p.label || title,
@@ -2878,6 +2914,9 @@ ${cvContextNote}${planContextNote}${additional_details ? '\n\nADDITIONAL DETAILS
                     milestones,
                     tools,
                     execValue,
+                    stakeholders,
+                    risks,
+                    communicationPlan,
                     // Generic shape keys (legacy renderers + populateRoleEditorsFromState read these)
                     title,
                     description,
@@ -2888,6 +2927,25 @@ ${cvContextNote}${planContextNote}${additional_details ? '\n\nADDITIONAL DETAILS
                 };
             }).filter(p => p.title || p.description || p.actions.length || (p.goals && p.goals.length) || (p.deliverables && p.deliverables.length) || (p.milestones && p.milestones.length));
             out.phases = phases;
+            // Normalize horizon-level successMetrics: accept array of objects
+            // {name, baseline, target, measurement} OR plain strings, and emit
+            // a renderer-friendly shape {metric, target, baseline, icon} while
+            // also preserving the raw object for editors.
+            if (Array.isArray(out.successMetrics)) {
+                const _str2 = v => (v == null) ? '' : (typeof v === 'string' ? v : (v.text || v.value || v.title || v.description || JSON.stringify(v)));
+                out.successMetrics = out.successMetrics.map(m => {
+                    if (m == null) return null;
+                    if (typeof m === 'string') return { metric: m, name: m, target: '', baseline: '', measurement: '', icon: 'target' };
+                    return {
+                        metric: _str2(m.name || m.metric || m.kpi || m.title || ''),
+                        name: _str2(m.name || m.metric || m.kpi || m.title || ''),
+                        target: _str2(m.target || ''),
+                        baseline: _str2(m.baseline || m.current || ''),
+                        measurement: _str2(m.measurement || m.howMeasured || m.how || ''),
+                        icon: _str2(m.icon || 'target')
+                    };
+                }).filter(m => m && (m.metric || m.target));
+            }
             return out;
         }
         const rawPlan = out.plan || {};
