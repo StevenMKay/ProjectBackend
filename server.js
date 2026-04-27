@@ -2823,13 +2823,33 @@ ${cvContextNote}${planContextNote}${additional_details ? '\n\nADDITIONAL DETAILS
             // Normalize each phase's action/metric arrays to string[] of plain text
             phases = phases.map(p => {
                 const _str = v => (v == null) ? '' : (typeof v === 'string' ? v : (v.text || v.action || v.task || v.title || v.description || JSON.stringify(v)));
+                const title = _str(p.title || p.label || '');
+                const description = _str(p.description || p.focus || p.summary || '');
+                const goals = Array.isArray(p.goals) ? p.goals.map(_str).filter(Boolean) : [];
+                const quickWins = Array.isArray(p.quickWins) ? p.quickWins.map(_str).filter(Boolean) : [];
+                const deliverables = Array.isArray(p.deliverables) ? p.deliverables.map(_str).filter(Boolean) : [];
+                const tasks = Array.isArray(p.tasks) ? p.tasks.map(_str).filter(Boolean) : [];
+                const milestones = Array.isArray(p.milestones) ? p.milestones.map(_str).filter(Boolean) : [];
+                let actions = Array.isArray(p.actions) ? p.actions.map(_str).filter(Boolean) : [];
+                if (!actions.length) {
+                    actions = goals.concat(quickWins, deliverables, tasks, milestones).filter(Boolean);
+                }
+                const metrics = Array.isArray(p.metrics) ? p.metrics.map(_str).filter(Boolean)
+                              : (Array.isArray(p.kpis) ? p.kpis.map(_str).filter(Boolean) : []);
                 return {
-                    title: _str(p.title),
-                    description: _str(p.description),
-                    actions: Array.isArray(p.actions) ? p.actions.map(_str).filter(Boolean) : [],
-                    metrics: Array.isArray(p.metrics) ? p.metrics.map(_str).filter(Boolean) : []
+                    // Original prompt-shape keys (frontend _normalizePlanMilestones reads these)
+                    label: p.label || title,
+                    focus: p.focus || description,
+                    goals,
+                    quickWins,
+                    deliverables,
+                    // Generic shape keys (legacy renderers + populateRoleEditorsFromState read these)
+                    title,
+                    description,
+                    actions,
+                    metrics
                 };
-            }).filter(p => p.title || p.description || p.actions.length);
+            }).filter(p => p.title || p.description || p.actions.length || (p.goals && p.goals.length) || (p.deliverables && p.deliverables.length));
             out.phases = phases;
             return out;
         }
