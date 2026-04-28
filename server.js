@@ -1,3 +1,83 @@
+// ================= PLAN RESPONSE NORMALIZATION HELPER (BACKEND, 2026-04-28) =================
+function normalizeGeneratedPlanForResponse(generated, planType) {
+    if (!generated || typeof generated !== 'object') return generated || {};
+    const rawType = String(
+        planType ||
+        generated?.hero?.plan_type ||
+        generated?.plan_type ||
+        generated?.planType ||
+        ''
+    ).toLowerCase();
+    const is90Day =
+        rawType.includes('90') ||
+        rawType.includes('day');
+    const is12Month =
+        rawType.includes('12') ||
+        rawType.includes('annual') ||
+        rawType.includes('1-year') ||
+        rawType.includes('months12');
+    const is2Year =
+        rawType.includes('2-year') ||
+        rawType.includes('2year') ||
+        rawType.includes('24') ||
+        rawType.includes('years2');
+    const phases = Array.isArray(generated.plan_phases)
+        ? generated.plan_phases
+        : [];
+    const summaryText = Array.isArray(generated.success_summary)
+        ? generated.success_summary.join(' ')
+        : String(generated.success_summary || '');
+    const successMetrics =
+        generated.kpis ||
+        generated.success_criteria ||
+        [];
+    if (is12Month && phases.length) {
+        generated.months12 = generated.months12 || {};
+        generated.months12.title = generated.months12.title || '12-Month Growth Plan';
+        generated.months12.timeframe = generated.months12.timeframe || '12 months';
+        generated.months12.executiveSummary =
+            generated.months12.executiveSummary ||
+            summaryText;
+        generated.months12.successMetrics =
+            generated.months12.successMetrics ||
+            successMetrics;
+        generated.months12.phases = Array.isArray(generated.months12.phases)
+            ? generated.months12.phases
+            : phases;
+        generated.months12.quarters = Array.isArray(generated.months12.quarters)
+            ? generated.months12.quarters
+            : generated.months12.phases;
+    }
+    if (is90Day && phases.length) {
+        generated.days90 = generated.days90 || {};
+        generated.days90.title = generated.days90.title || '90-Day Plan';
+        generated.days90.timeframe = generated.days90.timeframe || '90 days';
+        generated.days90.executiveSummary =
+            generated.days90.executiveSummary ||
+            summaryText;
+        generated.days90.successMetrics =
+            generated.days90.successMetrics ||
+            successMetrics;
+        generated.days90.phases = Array.isArray(generated.days90.phases)
+            ? generated.days90.phases
+            : phases;
+    }
+    if (is2Year && phases.length) {
+        generated.years2 = generated.years2 || {};
+        generated.years2.title = generated.years2.title || '2-Year Growth Plan';
+        generated.years2.timeframe = generated.years2.timeframe || '24 months';
+        generated.years2.executiveSummary =
+            generated.years2.executiveSummary ||
+            summaryText;
+        generated.years2.successMetrics =
+            generated.years2.successMetrics ||
+            successMetrics;
+        generated.years2.phases = Array.isArray(generated.years2.phases)
+            ? generated.years2.phases
+            : phases;
+    }
+    return generated;
+}
 require('dotenv').config();
 const express = require('express');
 const cors    = require('cors');
@@ -3315,40 +3395,6 @@ Return ONLY valid JSON (no markdown fences) with this EXACT structure:
         {
             "phase": "PHASE 1",
             "label": "Phase Label (e.g. Assess & Diagnose)",
-    // POST-PROCESS: Normalize generated plan for response shape safety net
-    function normalizeGeneratedPlanForResponse(generated, planType) {
-        if (!generated || typeof generated !== 'object') return generated;
-        const type = String(planType || generated?.hero?.plan_type || '').toLowerCase();
-        const phases = Array.isArray(generated.plan_phases) ? generated.plan_phases : [];
-        if (type.includes('12') && phases.length) {
-            generated.months12 = generated.months12 || {};
-            generated.months12.title = generated.months12.title || '12-Month Growth Plan';
-            generated.months12.timeframe = generated.months12.timeframe || '12 months';
-            generated.months12.phases = Array.isArray(generated.months12.phases)
-                ? generated.months12.phases
-                : phases;
-            generated.months12.quarters = Array.isArray(generated.months12.quarters)
-                ? generated.months12.quarters
-                : phases;
-        }
-        if ((type.includes('90') || type.includes('day')) && phases.length) {
-            generated.days90 = generated.days90 || {};
-            generated.days90.title = generated.days90.title || '90-Day Plan';
-            generated.days90.timeframe = generated.days90.timeframe || '90 days';
-            generated.days90.phases = Array.isArray(generated.days90.phases)
-                ? generated.days90.phases
-                : phases;
-        }
-        if ((type.includes('2') || type.includes('24')) && phases.length) {
-            generated.years2 = generated.years2 || {};
-            generated.years2.title = generated.years2.title || '2-Year Growth Plan';
-            generated.years2.timeframe = generated.years2.timeframe || '24 months';
-            generated.years2.phases = Array.isArray(generated.years2.phases)
-                ? generated.years2.phases
-                : phases;
-        }
-        return generated;
-    }
       "title": "Descriptive Phase Title",
       "timeframe": "Days 1-30",
       "objective": "One clear sentence describing the phase objective",
@@ -3427,10 +3473,15 @@ Generate deeply detailed, rich content for each section. Match the depth and qua
             }
         } catch (e) { console.warn('[Builder] summary cap trim failed:', e.message); }
 
-        // Normalize generated plan for response shape safety net
-        const normalizedGenerated = normalizeGeneratedPlanForResponse(generated, plan_type);
-        await deductAIUseServer(req);
-        res.json({ generated: normalizedGenerated });
+                // Normalize generated plan for response shape safety net
+                if (generated && typeof generated === 'object') {
+                    generated = normalizeGeneratedPlanForResponse(
+                        generated,
+                        plan_type || req.body.plan_type || req.body.planType
+                    );
+                }
+                await deductAIUseServer(req);
+                res.json({ generated });
     } catch (err) {
         console.error('[Builder] generate error:', err.message);
         res.status(500).json({ error: err.message });
