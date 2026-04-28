@@ -3228,20 +3228,73 @@ app.post('/api/builder/generate', requireBuilderAuth, checkBuilderQuota, express
 
         const sectionList = (sections || ['plan']).join(', ');
 
-        // Build timeframe guidance based on plan type
-        let timeframeGuidance;
-        if (plan_type === '12-month') {
-            timeframeGuidance = 'Use MONTH-based timeframes for each phase, e.g. "Months 1-3", "Months 4-6", "Months 7-9", "Months 10-12". Do NOT use day-based timeframes like "Days 1-90".';
-        } else if (plan_type === '2-year') {
-            timeframeGuidance = 'Use MONTH-based timeframes for each phase, e.g. "Months 1-6", "Months 7-12", "Months 13-18", "Months 19-24". Do NOT use day-based timeframes.';
-        } else {
-            timeframeGuidance = 'Use day-based timeframes for each phase, e.g. "Days 1-30", "Days 31-60", "Days 61-90".';
-        }
+                // STRICT PLAN TYPE REQUIREMENT
+                let timeframeGuidance;
+                let strictPlanTypeRequirement = '';
+                if (plan_type === '12-month') {
+                        timeframeGuidance = 'Use MONTH-based timeframes for each phase, e.g. "Months 1-3", "Months 4-6", "Months 7-9", "Months 10-12". Do NOT use day-based timeframes like "Days 1-90".';
+                        strictPlanTypeRequirement = `STRICT PLAN TYPE REQUIREMENT:
+You must generate the plan type requested in plan_type.
+If plan_type is "12-month":
+- Return exactly 4 quarters:
+    1. Q1 / Months 1-3
+    2. Q2 / Months 4-6
+    3. Q3 / Months 7-9
+    4. Q4 / Months 10-12
+- Do not include Months 13-18 or Months 19-24 in a 12-month plan.
+For compatibility, always return BOTH:
+1. A flat plan_phases array
+2. The selected structured horizon:
+     - months12.phases and months12.quarters for 12-month
+Each 12-month quarter must include:
+summary
+5 actions
+3 goals
+2 quick wins
+2 tools/technology items with purpose
+4 milestones
+2 deliverables
+3 stakeholders/stakeholder groups
+2 risks with mitigations
+communication cadence
+executive value
+Expected JSON shape for 12-month:
+{  "generated": {    "hero": {      "plan_type": "12-month"    },    "months12": {      "title": "12-Month Growth Plan",      "timeframe": "12 months",      "executiveSummary": "...",      "phases": [],      "quarters": []    },    "plan_phases": [],    "success_criteria": [],    "success_summary": [],    "kpis": []  }}`;
+                } else if (plan_type === '2-year') {
+                        timeframeGuidance = 'Use MONTH-based timeframes for each phase, e.g. "Months 1-6", "Months 7-12", "Months 13-18", "Months 19-24". Do NOT use day-based timeframes.';
+                        strictPlanTypeRequirement = `STRICT PLAN TYPE REQUIREMENT:
+You must generate the plan type requested in plan_type.
+If plan_type is "2-year":
+- Return exactly 4 phases:
+    1. Months 1-6
+    2. Months 7-12
+    3. Months 13-18
+    4. Months 19-24
+For compatibility, always return BOTH:
+1. A flat plan_phases array
+2. The selected structured horizon:
+     - years2.phases for 2-year`;
+                } else {
+                        timeframeGuidance = 'Use day-based timeframes for each phase, e.g. "Days 1-30", "Days 31-60", "Days 61-90".';
+                        strictPlanTypeRequirement = `STRICT PLAN TYPE REQUIREMENT:
+You must generate the plan type requested in plan_type.
+If plan_type is "90-day":
+- Return exactly 3 phases:
+    1. Days 1-30
+    2. Days 31-60
+    3. Days 61-90
+For compatibility, always return BOTH:
+1. A flat plan_phases array
+2. The selected structured horizon:
+     - days90.phases for 90-day`;
+                }
 
-        // Include plan context if provided
-        const planContextNote = plan_context ? `\n\nADDITIONAL PLAN CONTEXT FROM THE USER (incorporate this into the plan strategy and phases):\n${plan_context}` : '';
+                // Include plan context if provided
+                const planContextNote = plan_context ? `\n\nADDITIONAL PLAN CONTEXT FROM THE USER (incorporate this into the plan strategy and phases):\n${plan_context}` : '';
 
-        const systemPrompt = `You are an expert career coach and executive resume strategist. Generate a comprehensive, deeply detailed ${plan_type} career plan and resume content.${planContextNote}
+                const systemPrompt = `You are an expert career coach and executive resume strategist. Generate a comprehensive, deeply detailed ${plan_type} career plan and resume content.${planContextNote}
+
+${strictPlanTypeRequirement}
 
 CRITICAL: The plan_phases and ALL plan content must be written in FIRST PERSON voice from the candidate's perspective. Use "I", "my", "I will", "I bring" — NEVER refer to the candidate in the third person (do NOT write "The purpose of this plan is to align [Name] with..." or "[Name] brings..."). This is the candidate's own plan, presented in their own voice. NOTE: executive_summary is the ONE exception — it must be written in third person, recruiter-style (see spec below).
 
@@ -3249,19 +3302,53 @@ CRITICAL: Identify key skills, qualifications, terminology, and keywords from th
 
 Return ONLY valid JSON (no markdown fences) with this EXACT structure:
 {
-  "hero": {
-    "name": "Candidate Full Name",
-    "target_title": "Target Role Title",
-    "subtitle": "Current title or tagline",
-    "company": "Target Company",
-    "plan_type": "${plan_type}",
-    "tagline": "A concise 1-2 sentence professional tagline (MAX 220 characters). Third person. Focus on role, years of experience, domain, and one quantified strength. No fluff, no 'I', no buzzword stacking."
-  },
-  "executive_summary": "A PROFESSIONAL RESUME SUMMARY — not a narrative, mission statement, or career vision. STRICT RULES: (1) Maximum 3-4 sentences total. (2) Maximum 400 characters target; 450 characters is the absolute hard cap (outputs over 450 chars are INVALID and will be rejected). (3) No fluff, no storytelling, no future goals, no 'seeking', no 'aim to', no 'aspiring', no 'looking to'. (4) Third person only — NO 'I', 'my', 'we', 'our'. (5) NO banned phrases: 'results-driven', 'dynamic professional', 'passionate about', 'visionary leader', 'detail-oriented', 'proven track record', 'seasoned professional', 'thought leader'. (6) No buzzword stacking (avoid stacking: strategic, visionary, dynamic, results-driven, passionate). (7) Must sound like a real resume a recruiter scans in 5 seconds. STYLE: Direct, factual, concise. Prioritize metrics and scope over adjectives. Must feel human-written, credible, and recruiter-friendly. STRUCTURE (follow this exact sentence-by-sentence pattern): Sentence 1 = current role + years of experience + industry/domain. Sentence 2 = 2-3 concrete areas of expertise (not adjectives). Sentence 3 = measurable impact or scope (team size, revenue, scale). Sentence 4 (optional) = one differentiator — specialty, certification, or recognized skill. GOOD EXAMPLE: 'Vice President with 10+ years of experience in credit risk and business operations within banking. Specializes in strategic planning, data-driven decision making, and cross-functional leadership. Led initiatives impacting 700+ employees and delivered measurable revenue growth. Known for building scalable governance and performance frameworks.' BAD (do NOT emulate): 'I am a results-driven, visionary leader with a proven track record of driving transformation. Passionate about building high-performing teams, I aim to bring my dynamic leadership style to a role where I can make a lasting impact.'",
-  "plan_phases": [
-    {
-      "phase": "PHASE 1",
-      "label": "Phase Label (e.g. Assess & Diagnose)",
+    "hero": {
+        "name": "Candidate Full Name",
+        "target_title": "Target Role Title",
+        "subtitle": "Current title or tagline",
+        "company": "Target Company",
+        "plan_type": "${plan_type}",
+        "tagline": "A concise 1-2 sentence professional tagline (MAX 220 characters). Third person. Focus on role, years of experience, domain, and one quantified strength. No fluff, no 'I', no buzzword stacking."
+    },
+    "executive_summary": "A PROFESSIONAL RESUME SUMMARY — not a narrative, mission statement, or career vision. STRICT RULES: (1) Maximum 3-4 sentences total. (2) Maximum 400 characters target; 450 characters is the absolute hard cap (outputs over 450 chars are INVALID and will be rejected). (3) No fluff, no storytelling, no future goals, no 'seeking', no 'aim to', no 'aspiring', no 'looking to'. (4) Third person only — NO 'I', 'my', 'we', 'our'. (5) NO banned phrases: 'results-driven', 'dynamic professional', 'passionate about', 'visionary leader', 'detail-oriented', 'proven track record', 'seasoned professional', 'thought leader'. (6) No buzzword stacking (avoid stacking: strategic, visionary, dynamic, results-driven, passionate). (7) Must sound like a real resume a recruiter scans in 5 seconds. STYLE: Direct, factual, concise. Prioritize metrics and scope over adjectives. Must feel human-written, credible, and recruiter-friendly. STRUCTURE (follow this exact sentence-by-sentence pattern): Sentence 1 = current role + years of experience + industry/domain. Sentence 2 = 2-3 concrete areas of expertise (not adjectives). Sentence 3 = measurable impact or scope (team size, revenue, scale). Sentence 4 (optional) = one differentiator — specialty, certification, or recognized skill. GOOD EXAMPLE: 'Vice President with 10+ years of experience in credit risk and business operations within banking. Specializes in strategic planning, data-driven decision making, and cross-functional leadership. Led initiatives impacting 700+ employees and delivered measurable revenue growth. Known for building scalable governance and performance frameworks.' BAD (do NOT emulate): 'I am a results-driven, visionary leader with a proven track record of driving transformation. Passionate about building high-performing teams, I aim to bring my dynamic leadership style to a role where I can make a lasting impact.'",
+    "plan_phases": [
+        {
+            "phase": "PHASE 1",
+            "label": "Phase Label (e.g. Assess & Diagnose)",
+    // POST-PROCESS: Normalize generated plan for response shape safety net
+    function normalizeGeneratedPlanForResponse(generated, planType) {
+        if (!generated || typeof generated !== 'object') return generated;
+        const type = String(planType || generated?.hero?.plan_type || '').toLowerCase();
+        const phases = Array.isArray(generated.plan_phases) ? generated.plan_phases : [];
+        if (type.includes('12') && phases.length) {
+            generated.months12 = generated.months12 || {};
+            generated.months12.title = generated.months12.title || '12-Month Growth Plan';
+            generated.months12.timeframe = generated.months12.timeframe || '12 months';
+            generated.months12.phases = Array.isArray(generated.months12.phases)
+                ? generated.months12.phases
+                : phases;
+            generated.months12.quarters = Array.isArray(generated.months12.quarters)
+                ? generated.months12.quarters
+                : phases;
+        }
+        if ((type.includes('90') || type.includes('day')) && phases.length) {
+            generated.days90 = generated.days90 || {};
+            generated.days90.title = generated.days90.title || '90-Day Plan';
+            generated.days90.timeframe = generated.days90.timeframe || '90 days';
+            generated.days90.phases = Array.isArray(generated.days90.phases)
+                ? generated.days90.phases
+                : phases;
+        }
+        if ((type.includes('2') || type.includes('24')) && phases.length) {
+            generated.years2 = generated.years2 || {};
+            generated.years2.title = generated.years2.title || '2-Year Growth Plan';
+            generated.years2.timeframe = generated.years2.timeframe || '24 months';
+            generated.years2.phases = Array.isArray(generated.years2.phases)
+                ? generated.years2.phases
+                : phases;
+        }
+        return generated;
+    }
       "title": "Descriptive Phase Title",
       "timeframe": "Days 1-30",
       "objective": "One clear sentence describing the phase objective",
@@ -3340,8 +3427,10 @@ Generate deeply detailed, rich content for each section. Match the depth and qua
             }
         } catch (e) { console.warn('[Builder] summary cap trim failed:', e.message); }
 
+        // Normalize generated plan for response shape safety net
+        const normalizedGenerated = normalizeGeneratedPlanForResponse(generated, plan_type);
         await deductAIUseServer(req);
-        res.json({ generated });
+        res.json({ generated: normalizedGenerated });
     } catch (err) {
         console.error('[Builder] generate error:', err.message);
         res.status(500).json({ error: err.message });
