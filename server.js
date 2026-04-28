@@ -1,13 +1,26 @@
 // ================= PLAN RESPONSE NORMALIZATION HELPER (BACKEND, 2026-04-28) =================
 function normalizeGeneratedPlanForResponse(generated, planType) {
     if (!generated || typeof generated !== 'object') return generated || {};
-    const rawType = String(
-        planType ||
-        generated?.hero?.plan_type ||
-        generated?.plan_type ||
-        generated?.planType ||
-        ''
-    ).toLowerCase();
+        // Defensive unwrap: if generated.generated exists and is an object, and no plan keys at top level, unwrap
+        if (
+            generated &&
+            generated.generated &&
+            typeof generated.generated === 'object' &&
+            !generated.plan_phases &&
+            !generated.days90 &&
+            !generated.months12 &&
+            !generated.years2
+        ) {
+            generated = generated.generated;
+        }
+
+        const rawType = String(
+            planType ||
+            generated?.hero?.plan_type ||
+            generated?.plan_type ||
+            generated?.planType ||
+            ''
+        ).toLowerCase();
     const is90Day =
         rawType.includes('90') ||
         rawType.includes('day');
@@ -3447,11 +3460,17 @@ Sections to emphasize: ${sectionList}
 Generate deeply detailed, rich content for each section. Match the depth and quality of a professional executive-level career plan website.`;
 
         const result = await callOpenAI(apiKey, systemPrompt, userPrompt, 'gpt-4o', 16000, true);
-        const generated = extractJSON(result);
-        if (!generated) {
+        const parsed = extractJSON(result);
+        if (!parsed) {
             console.error('[Builder] generate: unparseable AI response:', result.slice(0, 500));
             return res.status(500).json({ error: 'Failed to parse AI response as JSON' });
         }
+
+        // Unwrap if parsed.generated exists and is an object
+        const generatedPayload =
+            parsed && parsed.generated && typeof parsed.generated === 'object'
+                ? parsed.generated
+                : parsed;
 
         // Server-side safety caps. The LLM occasionally ignores length limits;
         // enforce them here so exports never receive oversized content that
@@ -3463,26 +3482,26 @@ Generate deeply detailed, rich content for each section. Match the depth and qua
                 const lastStop = Math.max(cut.lastIndexOf('. '), cut.lastIndexOf('! '), cut.lastIndexOf('? '));
                 return (lastStop > maxLen * 0.5 ? cut.slice(0, lastStop + 1) : cut).trim();
             };
-            if (typeof generated.executive_summary === 'string' && generated.executive_summary.length > 450) {
-                console.warn('[Builder] executive_summary exceeded 450 chars (' + generated.executive_summary.length + ') — trimming');
-                generated.executive_summary = trimAtSentence(generated.executive_summary, 450);
+            if (typeof generatedPayload.executive_summary === 'string' && generatedPayload.executive_summary.length > 450) {
+                console.warn('[Builder] executive_summary exceeded 450 chars (' + generatedPayload.executive_summary.length + ') — trimming');
+                generatedPayload.executive_summary = trimAtSentence(generatedPayload.executive_summary, 450);
             }
-            if (generated.hero && typeof generated.hero.tagline === 'string' && generated.hero.tagline.length > 220) {
-                console.warn('[Builder] hero.tagline exceeded 220 chars (' + generated.hero.tagline.length + ') — trimming');
-                generated.hero.tagline = trimAtSentence(generated.hero.tagline, 220);
+            if (generatedPayload.hero && typeof generatedPayload.hero.tagline === 'string' && generatedPayload.hero.tagline.length > 220) {
+                console.warn('[Builder] hero.tagline exceeded 220 chars (' + generatedPayload.hero.tagline.length + ') — trimming');
+                generatedPayload.hero.tagline = trimAtSentence(generatedPayload.hero.tagline, 220);
             }
         } catch (e) { console.warn('[Builder] summary cap trim failed:', e.message); }
 
-                // Normalize generated plan for response shape safety net
-                const normalizedGenerated =
-                    generated && typeof generated === 'object'
-                        ? normalizeGeneratedPlanForResponse(
-                            generated,
-                            plan_type || req.body.plan_type || req.body.planType
-                        )
-                        : generated;
-                await deductAIUseServer(req);
-                return res.json({ generated: normalizedGenerated });
+        // Normalize generated plan for response shape safety net
+        const normalizedGenerated =
+            generatedPayload && typeof generatedPayload === 'object'
+                ? normalizeGeneratedPlanForResponse(
+                    generatedPayload,
+                    plan_type || req.body.plan_type || req.body.planType
+                )
+                : generatedPayload;
+        await deductAIUseServer(req);
+        return res.json({ generated: normalizedGenerated });
     } catch (err) {
         console.error('[Builder] generate error:', err.message);
         res.status(500).json({ error: err.message });
