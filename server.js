@@ -3474,14 +3474,15 @@ Generate deeply detailed, rich content for each section. Match the depth and qua
         } catch (e) { console.warn('[Builder] summary cap trim failed:', e.message); }
 
                 // Normalize generated plan for response shape safety net
-                if (generated && typeof generated === 'object') {
-                    generated = normalizeGeneratedPlanForResponse(
-                        generated,
-                        plan_type || req.body.plan_type || req.body.planType
-                    );
-                }
+                const normalizedGenerated =
+                    generated && typeof generated === 'object'
+                        ? normalizeGeneratedPlanForResponse(
+                            generated,
+                            plan_type || req.body.plan_type || req.body.planType
+                        )
+                        : generated;
                 await deductAIUseServer(req);
-                res.json({ generated });
+                return res.json({ generated: normalizedGenerated });
     } catch (err) {
         console.error('[Builder] generate error:', err.message);
         res.status(500).json({ error: err.message });
