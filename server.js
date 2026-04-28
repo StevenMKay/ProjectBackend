@@ -1,4 +1,28 @@
 // ================= PLAN RESPONSE NORMALIZATION HELPER (BACKEND, 2026-04-28) =================
+// ================= RESUME PAYLOAD SANITIZER (BACKEND, 2026-04-28) =================
+function stripPlanKeysFromResumeData(input) {
+    // Defensive deep clone (Node 17+)
+    const src = typeof structuredClone === 'function' ? structuredClone(input || {}) : JSON.parse(JSON.stringify(input || {}));
+
+    [
+        'days90',
+        'months12',
+        'years2',
+        'plan_phases',
+        'success_summary',
+        'success_criteria',
+        'kpis',
+        'horizon',
+        'plan',
+        'planSource',
+        'planGeneratedAt',
+        'exportSettings'
+    ].forEach(k => {
+        try { delete src[k]; } catch (_) {}
+    });
+
+    return src;
+}
 function normalizeGeneratedPlanForResponse(generated, planType) {
     if (!generated || typeof generated !== 'object') return generated || {};
         // Defensive unwrap: if generated.generated exists and is an object, and no plan keys at top level, unwrap
