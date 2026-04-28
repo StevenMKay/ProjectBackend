@@ -2442,6 +2442,33 @@ PLAN RULES (READ CAREFULLY):
 - successCriteria[] is an array of plain-text outcome statements (3–5 items per horizon) describing what "success at this horizon" looks like.
 - Tailor every item to the target role, company, and seniority — generic filler ("Build relationships", "Learn the team") is INVALID.
 
+PLAN PHASE FIELD SHAPE (per phase, every horizon):
+- label: short phase title (e.g. "Phase 1: Foundation", "Q1: Stabilize Delivery").
+- timeframe: explicit window (e.g. "Days 1-30", "Months 1-3", "Q1").
+- category: short tag describing the phase emphasis (e.g. "Discovery", "Stabilize", "Scale", "Positioning"). One or two words.
+- summary: 2-3 sentence paragraph that explains what this phase is about in the context of THIS target role at THIS target company. Must reference role-specific language, not generic "ramp up" language.
+- focus: one-sentence objective for the phase.
+- actions: specific, executable steps (verbs + objects + context). Bad: "Framework development". Good: "Stand up a 6-week onboarding framework with the Director of Engineering covering CI/CD, on-call rotation, and incident review."
+- goals: outcome-oriented goals tied to the role.
+- quickWins: low-risk early wins visible to leadership in the first half of the phase.
+- tools_and_technology: items shaped {name, purpose} (e.g. {"name":"Looker","purpose":"Operational KPI dashboards for the VP Product weekly review"}).
+- milestones: concrete, dated checkpoints.
+- deliverables: artifacts the candidate produces (docs, dashboards, playbooks, models).
+- stakeholders: {name, ask} as defined above.
+- risks: {risk, mitigation} as defined above.
+- communicationPlan: explicit cadence (e.g. "Weekly 30-min sync with VP Product; biweekly written status to CEO; monthly all-hands demo").
+- execValue: 1 short paragraph explaining the executive-level value the phase delivers (revenue, cost, speed, risk, retention, positioning).
+
+PER-HORIZON DENSITY REQUIREMENTS (HARD MINIMUMS — do NOT under-fill):
+- days90 (3 phases): per phase → summary, 4 actions, 2 goals, 2 quickWins, 2 tools (with purpose), 3 milestones, 2 deliverables, 2 stakeholders, 2 risks (with mitigations), communicationPlan, execValue.
+- months12 (4 phases / quarters): per phase → summary (2-3 sentences), 5 actions, 3 goals, 2 quickWins, 2 tools (with purpose), 4 milestones, 2 deliverables, 3 stakeholders, 2 risks (with mitigations), communicationPlan, execValue paragraph.
+- years2 (4 phases / half-years): per phase → summary, 4 actions, 3 goals, 2 quickWins, 2 tools, 3 milestones, 2 deliverables, 3 stakeholders, 2 risks, communicationPlan, execValue. Emphasize capability building, market positioning, and earnings trajectory.
+
+ANTI-GENERIC GUARDRAILS:
+- Do not return generic labels like "Framework development" without concrete detail. Every action must include enough context that the candidate could actually execute it. Use the target company, role title, domain language, job description, and candidate background.
+- Do not duplicate the same words across actions/goals/quick wins/deliverables. Each field must add unique value.
+- If you cannot satisfy a minimum count with role-specific, non-generic items, generate fewer items rather than padding with filler — the renderer will flag thin phases honestly. But you should be able to meet the minimums for any well-defined target role.
+
 {
   "original_score": 0,
   "decision": "PASS|BORDERLINE|REJECT",
